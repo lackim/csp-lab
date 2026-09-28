@@ -1,0 +1,27 @@
+{
+  "name": "csp-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "csp-lab": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.js",
+    "test:mcp": "npm run build && node test/mcp-smoke.js",
+    "start": "node dist/cli.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "@shipcli/core": "0.5.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "25.4.0",
+    "typescript": "5.9.3"
+  }
+}

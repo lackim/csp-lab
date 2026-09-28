@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.csp-lab/
+.agents/skills/
+skills-lock.json

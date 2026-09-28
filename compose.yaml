@@ -1,0 +1,17 @@
+services:
+  hub:
+    image: csp-lab-native:local
+    build: .
+    entrypoint: ["/usr/local/bin/zmqproxy"]
+    command: ["-v", "${CSP_VERSION:-2}"]
+  node2:
+    image: csp-lab-native:local
+    depends_on: [hub]
+    command: ["server", "${CSP_VERSION:-2}", "2", "hub"]
+  node3:
+    image: csp-lab-native:local
+    depends_on: [hub]
+    command: ["server", "${CSP_VERSION:-2}", "3", "hub"]
+  probe:
+    image: csp-lab-native:local
+    profiles: ["tools"]
