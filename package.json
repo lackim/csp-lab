@@ -8,8 +8,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.js",
-    "test:mcp": "npm run build && node test/mcp-smoke.js",
+    "test": "npm run build && npm run typecheck:test && node --test test/*.test.ts",
+    "test:mcp": "npm run build && npm run typecheck:test && node test/mcp-smoke.ts",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "start": "node dist/cli.js"
   },
   "engines": {

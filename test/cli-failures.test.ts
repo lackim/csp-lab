@@ -20,8 +20,8 @@ async function makeLab() {
   return root;
 }
 
-async function runCli(root, args, env = {}) {
-  return await new Promise((resolveResult, reject) => {
+async function runCli(root: string, args: string[], env: NodeJS.ProcessEnv = {}) {
+  return await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolveResult, reject) => {
     const child = spawn(process.execPath, [join(root, "dist/cli.js"), ...args], {
       cwd: root,
       env: { ...process.env, SHIPCLI_DISABLE_UPDATE_CHECK: "1", ...env },
@@ -40,7 +40,7 @@ async function runCli(root, args, env = {}) {
   });
 }
 
-async function putState(root, protocol = 2) {
+async function putState(root: string, protocol = 2) {
   await mkdir(join(root, ".csp-lab"));
   await writeFile(join(root, ".csp-lab/state.json"), JSON.stringify({ protocol, libcspVersion: "2.1" }));
 }
@@ -101,7 +101,10 @@ esac
     assert.deepEqual(JSON.parse(ping.stdout), { target: 3, reachable: false, rttMs: -1 });
     const doctor = await runCli(root, ["doctor", "--json"], env);
     assert.equal(doctor.code, 1, doctor.stderr);
-    const report = JSON.parse(doctor.stdout);
+    const report = JSON.parse(doctor.stdout) as {
+      healthy: boolean;
+      nodes: Array<{ target: number; reachable: boolean }>;
+    };
     assert.equal(report.healthy, false);
     assert.deepEqual(report.nodes.map(({ target, reachable }) => [target, reachable]), [[2, true], [3, false]]);
   } finally {
