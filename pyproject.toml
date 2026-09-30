@@ -28,6 +28,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/csp_lab"]
 
+[tool.hatch.build.targets.sdist]
+only-include = ["src/csp_lab", "THIRD_PARTY_NOTICES.md", "docs/versioning.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
