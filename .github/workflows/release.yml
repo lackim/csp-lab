@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: '0.9.16'
+      - name: Verify tag and release commit
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_ENABLED: ${{ vars.RELEASE_ENABLED }}
+        run: |
+          test "$RELEASE_ENABLED" = true
+          test "$RELEASE_TAG" = "v$(uv version --short --locked)"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - run: uv python install 3.10
+      - run: uv sync --locked --python 3.10
+      - run: uv run --locked pytest -q
+      - run: uv run --locked ruff check src/csp_lab tests
+      - run: uv run --locked mypy src/csp_lab
+      - run: bash test/wheel.sh
+      - run: bash test/integration.sh
+      - run: uv build --out-dir dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+
+  image:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish image
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/lackim/csp-lab:${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/lackim/csp-lab
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+  pypi:
+    needs: [build, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://pypi.org/project/csp-lab/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-dist
+          path: dist
+      - name: Verify anonymous image access
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: docker manifest inspect "ghcr.io/lackim/csp-lab:$RELEASE_TAG" > /dev/null
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
