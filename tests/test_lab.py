@@ -1,5 +1,6 @@
 """CLI and orchestration behavior without a running Docker daemon."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -15,17 +16,18 @@ runner = CliRunner()
 @pytest.fixture
 def lab_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(docker, "ROOT", tmp_path)
-    monkeypatch.setattr(docker, "STATE_DIR", tmp_path / ".csp-lab")
-    monkeypatch.setattr(docker, "STATE_FILE", tmp_path / ".csp-lab" / "state.json")
+    monkeypatch.setattr(docker, "STATE_DIR", tmp_path / "state" / "csp-lab")
+    monkeypatch.setattr(docker, "STATE_FILE", tmp_path / "state" / "csp-lab" / "state.json")
     (tmp_path / "bin").mkdir()
     return tmp_path
 
 
-def put_state(root: Path, protocol: int = 2) -> None:
-    state_dir = root / ".csp-lab"
-    state_dir.mkdir()
+def put_state(root: Path, protocol: int = 2, build: bool = False, image: str | None = None) -> None:
+    state_dir = root / "state" / "csp-lab"
+    state_dir.mkdir(parents=True)
     (state_dir / "state.json").write_text(
-        json.dumps({"protocol": protocol, "libcspVersion": "2.1"}), encoding="utf-8"
+        json.dumps({"protocol": protocol, "libcspVersion": "2.1", "build": build, "image": image}),
+        encoding="utf-8",
     )
 
 
@@ -77,7 +79,7 @@ def test_docker_unavailable(lab_root: Path, monkeypatch: pytest.MonkeyPatch) -> 
 def test_failed_startup_cleans_up(lab_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_docker(
         lab_root,
-        'printf "%s\\n" "$*" >> "$CSP_LAB_FAKE_LOG"\n'
+        'printf "%s|%s\\n" "$CSP_LAB_IMAGE" "$*" >> "$CSP_LAB_FAKE_LOG"\n'
         'for arg do if [ "$arg" = up ]; then exit 17; fi; done\n',
     )
     log = lab_root / "docker.log"
@@ -87,9 +89,95 @@ def test_failed_startup_cleans_up(lab_root: Path, monkeypatch: pytest.MonkeyPatc
     assert result.exit_code == 1
     assert "docker exited 17" in json.loads(result.stdout)["error"]
     calls = log.read_text(encoding="utf-8")
-    assert "up -d --build hub node2 node3" in calls
+    assert "ghcr.io/lackim/csp-lab:v0.1.0|compose -p csp-lab" in calls
+    assert "up -d --pull always hub node2 node3" in calls
     assert "down --remove-orphans" in calls
-    assert not (lab_root / ".csp-lab" / "state.json").exists()
+    assert not (lab_root / "state" / "csp-lab" / "state.json").exists()
+
+
+def test_local_build_uses_source_checkout(lab_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (lab_root / "Dockerfile").touch()
+    (lab_root / "vendor" / "libcsp").mkdir(parents=True)
+    fake_docker(
+        lab_root,
+        'printf "%s|%s|%s\\n" "$CSP_LAB_IMAGE" "$CSP_LAB_BUILD_CONTEXT" '
+        '"$*" >> "$CSP_LAB_FAKE_LOG"\n'
+        'for arg do if [ "$arg" = up ]; then exit 17; fi; done\n',
+    )
+    log = lab_root / "docker.log"
+    monkeypatch.setenv("PATH", str(lab_root / "bin"))
+    monkeypatch.setenv("CSP_LAB_FAKE_LOG", str(log))
+    result = runner.invoke(app, ["up", "--protocol", "2", "--build", "--json"])
+    assert result.exit_code == 1
+    calls = log.read_text(encoding="utf-8")
+    assert f"csp-lab-native:local|{lab_root}|compose -p csp-lab" in calls
+    assert "compose.build.yaml up -d --build hub node2 node3" in calls
+    assert "down --remove-orphans" in calls
+
+
+def test_local_lab_can_be_stopped_without_checkout(
+    lab_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_state(lab_root, build=True)
+    fake_docker(lab_root, 'printf "%s|%s\\n" "$CSP_LAB_IMAGE" "$*" >> "$CSP_LAB_FAKE_LOG"\n')
+    log = lab_root / "docker.log"
+    monkeypatch.setenv("PATH", str(lab_root / "bin"))
+    monkeypatch.setenv("CSP_LAB_FAKE_LOG", str(log))
+    result = runner.invoke(app, ["down", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"stopped": True}
+    assert not (lab_root / "state" / "csp-lab" / "state.json").exists()
+    calls = log.read_text(encoding="utf-8")
+    assert "csp-lab-native:local|compose -p csp-lab" in calls
+    assert "compose.build.yaml" not in calls
+
+
+def test_running_lab_keeps_its_image_after_cli_upgrade(
+    lab_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_state(lab_root, image="ghcr.io/lackim/csp-lab:v0.1.0")
+    fake_docker(
+        lab_root,
+        'printf "%s\\n" "$CSP_LAB_IMAGE" >> "$CSP_LAB_FAKE_LOG"\n'
+        'for argument do if [ "$argument" = ps ]; then '
+        'printf "hub\\nnode2\\nnode3\\n"; fi; done\n',
+    )
+    monkeypatch.setattr(docker, "version", lambda _: "0.2.0")
+    log = lab_root / "docker.log"
+    monkeypatch.setenv("PATH", str(lab_root / "bin"))
+    monkeypatch.setenv("CSP_LAB_FAKE_LOG", str(log))
+    result = runner.invoke(app, ["status", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["running"] is True
+    assert log.read_text(encoding="utf-8") == "ghcr.io/lackim/csp-lab:v0.1.0\n"
+
+
+def test_legacy_lab_can_be_seen_and_stopped(
+    lab_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy_dir = lab_root / ".csp-lab"
+    legacy_dir.mkdir()
+    (legacy_dir / "state.json").write_text(
+        '{"protocol":2,"libcspVersion":"2.1"}', encoding="utf-8"
+    )
+    fake_docker(
+        lab_root,
+        'printf "%s|%s\\n" "$CSP_LAB_IMAGE" "$*" >> "$CSP_LAB_FAKE_LOG"\n'
+        'for argument do if [ "$argument" = ps ]; then '
+        'printf "hub\\nnode2\\nnode3\\n"; fi; done\n',
+    )
+    log = lab_root / "docker.log"
+    monkeypatch.setenv("PATH", str(lab_root / "bin"))
+    monkeypatch.setenv("CSP_LAB_FAKE_LOG", str(log))
+    expected_project = "csp-lab-" + hashlib.sha256(str(lab_root).encode()).hexdigest()[:8]
+    result = runner.invoke(app, ["status", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["running"] is True
+    result = runner.invoke(app, ["down", "--json"])
+    assert result.exit_code == 0
+    assert not legacy_dir.exists()
+    calls = log.read_text(encoding="utf-8")
+    assert f"csp-lab-native:local|compose -p {expected_project}" in calls
 
 
 def test_unresponsive_node_sets_exit_code(lab_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

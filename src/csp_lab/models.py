@@ -1,5 +1,6 @@
 """Validated data returned by the CLI and MCP server."""
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
@@ -17,6 +18,10 @@ class LabModel(BaseModel):
 class LabState(LabModel):
     protocol: Protocol
     libcsp_version: Literal["2.1"] = Field(alias="libcspVersion")
+    build: bool = Field(default=False, exclude=True)
+    image: str | None = Field(default=None, exclude=True)
+    project: str | None = Field(default=None, exclude=True)
+    legacy_root: Path | None = Field(default=None, exclude=True)
 
 
 class PingResult(LabModel):

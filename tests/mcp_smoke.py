@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 
 from mcp import ClientSession, StdioServerParameters
@@ -12,6 +13,7 @@ async def main() -> None:
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "csp_lab.cli", "mcp"],
+        env=os.environ.copy(),
     )
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as session:
