@@ -53,7 +53,6 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-      artifact-metadata: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,6 +81,7 @@ jobs:
           subject-name: ghcr.io/lackim/csp-lab
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
 
   pypi:
     needs: [build, image]
@@ -97,4 +97,8 @@ jobs:
         with:
           name: python-dist
           path: dist
+      - name: Verify anonymous image access
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: docker manifest inspect "ghcr.io/lackim/csp-lab:$RELEASE_TAG" > /dev/null
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
