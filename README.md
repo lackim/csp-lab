@@ -1,10 +1,10 @@
 # csp-lab
 
-A local CubeSat Space Protocol lab powered by [libcsp](https://github.com/libcsp/libcsp). It runs two simulated nodes and a ZMQ hub in Docker. The TypeScript CLI uses [`@shipcli/core`](https://github.com/lackim/shipcli); the MCP server offers the same diagnostic operations to an AI client.
+A local CubeSat Space Protocol lab powered by [libcsp](https://github.com/libcsp/libcsp). It runs two simulated nodes and a ZMQ hub in Docker. The Python CLI and MCP server provide the same diagnostic operations.
 
 ## Requirements
 
-- Node.js 24 or newer
+- Python 3.10 or newer and [uv](https://docs.astral.sh/uv/)
 - Docker with Compose
 - Git submodules
 
@@ -14,12 +14,11 @@ The native code is built against the pinned `libcsp` v2.1 submodule. That librar
 
 ```sh
 git submodule update --init --recursive
-npm ci
-npm run build
-node dist/cli.js up --protocol 2
-node dist/cli.js ping 2 --json
-node dist/cli.js doctor --json
-node dist/cli.js down
+uv sync --locked
+uv run --locked csp-lab up --protocol 2
+uv run --locked csp-lab ping 2 --json
+uv run --locked csp-lab doctor --json
+uv run --locked csp-lab down
 ```
 
 To test CSP v1, start a fresh lab with `up --protocol 1`. `up` refuses to change the protocol of an existing lab; run `down` first. The two versions never share a running network.
@@ -28,26 +27,26 @@ The CLI commands are `up`, `down`, `status`, `topology`, `ping <address>`, and `
 
 ## MCP
 
-Start the lab first, then configure an MCP client to launch `dist/mcp.js` over stdio. For clients that use an `mcpServers` JSON configuration, the entry is:
+Start the lab first, then configure an MCP client to launch `csp-lab mcp` over stdio. For clients that use an `mcpServers` JSON configuration, the entry for a local clone is:
 
 ```json
 {
   "mcpServers": {
     "csp-lab": {
-      "command": "node",
-      "args": ["/absolute/path/to/csp-lab/dist/mcp.js"]
+      "command": "/absolute/path/to/csp-lab/.venv/bin/csp-lab",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-Replace the path with the absolute path to your clone. If your client uses a different configuration format, set its command to `node`, its argument to that same path, and its transport to stdio. Keep the lab running in a separate terminal while using the MCP tools.
+Replace the path with the absolute path to your clone after `uv sync`. If your client uses a different configuration format, set its command to the installed `csp-lab` executable, its argument to `mcp`, and its transport to stdio. Keep the lab running in a separate terminal while using the MCP tools.
 
 The stdio server provides `csp_topology`, `csp_ping`, and `csp_diagnose`. It does not expose commands that reboot, shut down, or read or write node memory. The simulated server binds only the CSP ping service port.
 
 ## What is tested
 
-`npm test` compiles TypeScript and checks protocol validation, unavailable Docker, cleanup after a failed start, and unresponsive nodes without requiring Docker. The Docker integration flow exercises real libcsp, ZMQ, CLI diagnostics, and MCP for both protocol versions:
+`uv run --locked pytest` checks protocol validation, unavailable Docker, cleanup after a failed start, and unresponsive nodes without requiring Docker. Run `uv run --locked ruff check src/csp_lab tests` and `uv run --locked mypy src/csp_lab` for lint and types. The Docker integration flow exercises real libcsp, ZMQ, CLI diagnostics, and MCP for both protocol versions:
 
 ```sh
 bash test/integration.sh
