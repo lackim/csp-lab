@@ -3,3 +3,10 @@ dist/
 .csp-lab/
 .agents/skills/
 skills-lock.json
+/.local/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/

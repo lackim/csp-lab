@@ -6,3 +6,6 @@ dist
 test
 skills-lock.json
 vendor/libcsp/.git
+.venv
+.local
+__pycache__

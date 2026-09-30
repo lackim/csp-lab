@@ -12,7 +12,7 @@ The current image always builds against libcsp v2.1. Selecting `--protocol 1` ch
 
 ## Updating libcsp 2.x
 
-Update the pinned submodule in a dedicated change. Check the C API and ZMQ build, then run `npm test` and `bash test/integration.sh` for both wire protocols. Review the generated Docker image and record the new libcsp commit in the change. Keep the CLI and MCP output compatible within a csp-lab release unless a breaking change is intentional.
+Update the pinned submodule in a dedicated change. Check the C API and ZMQ build, then run `uv run --locked pytest` and `bash test/integration.sh` for both wire protocols. Review the generated Docker image and record the new libcsp commit in the change. Keep the CLI and MCP output compatible within a csp-lab release unless a breaking change is intentional.
 
 ## Historical libcsp 1.x
 
