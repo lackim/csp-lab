@@ -6,20 +6,33 @@ A local CubeSat Space Protocol lab powered by [libcsp](https://github.com/libcsp
 
 - Python 3.10 or newer and [uv](https://docs.astral.sh/uv/)
 - Docker with Compose
-- Git submodules
 
 The native code is built against the pinned `libcsp` v2.1 submodule. That library supports CSP protocol v1 and v2 at runtime. The Docker image uses Linux because recent libcsp releases do not provide maintained native macOS support. See [versioning policy](docs/versioning.md) for the supported combinations.
 
-## Start
+## Local development
 
 ```sh
 git submodule update --init --recursive
 uv sync --locked
-uv run --locked csp-lab up --protocol 2
+uv run --locked csp-lab up --protocol 2 --build
 uv run --locked csp-lab ping 2 --json
 uv run --locked csp-lab doctor --json
 uv run --locked csp-lab down
 ```
+
+`--build` compiles the native image from this checkout, so it needs the libcsp submodule. Without `--build`, the CLI uses the image matching its own version from GHCR. That image becomes available after the first release.
+
+Once released, the package can run without a clone or local compilation:
+
+```sh
+uvx csp-lab up --protocol 2
+uvx csp-lab ping 2
+uvx csp-lab down
+```
+
+You can also install it with `uv tool install csp-lab` and then use `csp-lab` directly. Lab state is stored in `~/.local/state/csp-lab` or under `XDG_STATE_HOME` when set, so commands work from any directory.
+
+If a lab was started by the earlier checkout-based CLI, run `csp-lab down` from that checkout once before switching to `uvx` from another directory. The CLI recognizes and removes the earlier path-based Docker project there.
 
 To test CSP v1, start a fresh lab with `up --protocol 1`. `up` refuses to change the protocol of an existing lab; run `down` first. The two versions never share a running network.
 
@@ -27,20 +40,20 @@ The CLI commands are `up`, `down`, `status`, `topology`, `ping <address>`, and `
 
 ## MCP
 
-Start the lab first, then configure an MCP client to launch `csp-lab mcp` over stdio. For clients that use an `mcpServers` JSON configuration, the entry for a local clone is:
+Start the lab first, then configure an MCP client to launch `csp-lab mcp` over stdio. After the package is published, the entry is:
 
 ```json
 {
   "mcpServers": {
     "csp-lab": {
-      "command": "/absolute/path/to/csp-lab/.venv/bin/csp-lab",
-      "args": ["mcp"]
+      "command": "uvx",
+      "args": ["csp-lab", "mcp"]
     }
   }
 }
 ```
 
-Replace the path with the absolute path to your clone after `uv sync`. If your client uses a different configuration format, set its command to the installed `csp-lab` executable, its argument to `mcp`, and its transport to stdio. Keep the lab running in a separate terminal while using the MCP tools.
+With `uv tool install`, set the command to `csp-lab` and the argument to `mcp`. GUI clients may not see the shell's `PATH`; use the full path to `uvx` or the installed `csp-lab` executable when needed. For a local clone after `uv sync`, use `/absolute/path/to/csp-lab/.venv/bin/csp-lab` as the command. Keep the lab running in a separate terminal while using the MCP tools.
 
 The stdio server provides `csp_topology`, `csp_ping`, and `csp_diagnose`. It does not expose commands that reboot, shut down, or read or write node memory. The simulated server binds only the CSP ping service port.
 

@@ -74,6 +74,7 @@ def _action(operation: Callable[[], ResultT], json_output: bool) -> ResultT:
 def up(
     ctx: typer.Context,
     protocol: str = typer.Option("2", "--protocol", help="CSP protocol version (1 or 2)"),
+    build: bool = typer.Option(False, "--build", help="Build the native image from this checkout"),
     json_output: bool = typer.Option(False, "--json", help="Print JSON output"),
     show_version: bool = typer.Option(
         False, "-V", "--version", callback=_show_version, is_eager=True, hidden=True
@@ -81,7 +82,7 @@ def up(
 ) -> None:
     """Start two libcsp nodes and a ZMQ hub."""
     json_output = _json(ctx, json_output)
-    state = _action(lambda: docker.up(docker.parse_protocol(protocol)), json_output)
+    state = _action(lambda: docker.up(docker.parse_protocol(protocol), build), json_output)
     data: dict[str, object] = {"started": True}
     data.update(state.as_json())
     _emit(data, json_output)

@@ -25,4 +25,5 @@ jobs:
       - run: uv run --locked pytest -q
       - run: uv run --locked ruff check src/csp_lab tests
       - run: uv run --locked mypy src/csp_lab
+      - run: bash test/wheel.sh
       - run: bash test/integration.sh

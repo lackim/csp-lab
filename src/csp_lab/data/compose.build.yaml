@@ -1,0 +1,11 @@
+services:
+  hub:
+    build:
+      context: ${CSP_LAB_BUILD_CONTEXT:?}
+    pull_policy: build
+  node2:
+    pull_policy: never
+  node3:
+    pull_policy: never
+  probe:
+    pull_policy: never
