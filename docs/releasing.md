@@ -37,9 +37,11 @@ the version in `pyproject.toml` or points outside `main`.
    git push origin v0.1.0
    ```
 
-4. Approve the `release` environment deployment after checking the tag and
-   workflow run. Wait for both publication jobs to finish.
-5. Confirm the GHCR package is public, then verify from a clean directory:
+4. Approve the image job's `release` environment deployment after checking
+   the tag and workflow run. Once the image is published, make its GHCR package
+   public. Then approve the PyPI job's deployment. That job checks anonymous
+   image access before publishing the Python package.
+5. Wait for both jobs to finish, then verify from a clean directory:
 
    ```sh
    uvx csp-lab==0.1.0 up --protocol 2
@@ -48,6 +50,6 @@ the version in `pyproject.toml` or points outside `main`.
    gh attestation verify oci://ghcr.io/lackim/csp-lab:v0.1.0 --owner lackim
    ```
 
-If the image job succeeds and the PyPI job fails, correct the trusted publisher
-or package issue and rerun the failed job. The tag and version must stay the same;
-do not overwrite a published PyPI release.
+If the image job succeeds and the PyPI job fails, correct package visibility,
+the trusted publisher, or the package issue and rerun the failed job. The tag
+and version must stay the same; do not overwrite a published PyPI release.
