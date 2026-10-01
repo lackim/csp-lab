@@ -2,27 +2,9 @@
 
 A local CubeSat Space Protocol lab powered by [libcsp](https://github.com/libcsp/libcsp). It runs two simulated nodes and a ZMQ hub in Docker. The Python CLI and MCP server provide the same diagnostic operations.
 
-## Requirements
+## Quick start
 
-- Python 3.10 or newer and [uv](https://docs.astral.sh/uv/)
-- Docker with Compose
-
-The native code is built against the pinned `libcsp` v2.1 submodule. That library supports CSP protocol v1 and v2 at runtime. The Docker image uses Linux because recent libcsp releases do not provide maintained native macOS support. See [versioning policy](docs/versioning.md) for the supported combinations.
-
-## Local development
-
-```sh
-git submodule update --init --recursive
-uv sync --locked
-uv run --locked csp-lab up --protocol 2 --build
-uv run --locked csp-lab ping 2 --json
-uv run --locked csp-lab doctor --json
-uv run --locked csp-lab down
-```
-
-`--build` compiles the native image from this checkout, so it needs the libcsp submodule. Without `--build`, the CLI uses the image matching its own version from GHCR. That image becomes available after the first release.
-
-Once released, the package can run without a clone or local compilation:
+With [uv](https://docs.astral.sh/uv/) and Docker Compose installed and Docker running:
 
 ```sh
 uvx csp-lab up --protocol 2
@@ -30,7 +12,20 @@ uvx csp-lab ping 2
 uvx csp-lab down
 ```
 
-You can also install it with `uv tool install csp-lab` and then use `csp-lab` directly. Lab state is stored in `~/.local/state/csp-lab` or under `XDG_STATE_HOME` when set, so commands work from any directory.
+The published [Python package](https://pypi.org/project/csp-lab/) uses its matching [prebuilt Docker image](https://github.com/lackim/csp-lab/pkgs/container/csp-lab), so this does not require a source checkout or a local libcsp build. You can also install the CLI with `uv tool install csp-lab` and run `csp-lab` directly.
+
+## Why use it?
+
+The lab gives you a repeatable place to try CSP v1 and v2, check whether simulated nodes respond, and inspect failures through the CLI or MCP tools. It is useful when developing CSP integrations or experimenting with an MCP client without arranging physical CubeSat hardware.
+
+## Requirements
+
+- Python 3.10 or newer and uv
+- Docker with Compose
+
+The native code is built against the pinned `libcsp` v2.1 submodule. That library supports CSP protocol v1 and v2 at runtime. The Docker image uses Linux because recent libcsp releases do not provide maintained native macOS support. See [versioning policy](docs/versioning.md) for the supported combinations.
+
+Lab state is stored in `~/.local/state/csp-lab` or under `XDG_STATE_HOME` when set, so commands work from any directory.
 
 If a lab was started by the earlier checkout-based CLI, run `csp-lab down` from that checkout once before switching to `uvx` from another directory. The CLI recognizes and removes the earlier path-based Docker project there.
 
@@ -40,7 +35,7 @@ The CLI commands are `up`, `down`, `status`, `topology`, `ping <address>`, and `
 
 ## MCP
 
-Start the lab first, then configure an MCP client to launch `csp-lab mcp` over stdio. After the package is published, the entry is:
+Start the lab first, then configure an MCP client to launch `csp-lab mcp` over stdio:
 
 ```json
 {
@@ -57,6 +52,21 @@ With `uv tool install`, set the command to `csp-lab` and the argument to `mcp`. 
 
 The stdio server provides `csp_topology`, `csp_ping`, and `csp_diagnose`. It does not expose commands that reboot, shut down, or read or write node memory. The simulated server binds only the CSP ping service port.
 
+## Local development
+
+From a clone of this repository:
+
+```sh
+git submodule update --init --recursive
+uv sync --locked
+uv run --locked csp-lab up --protocol 2 --build
+uv run --locked csp-lab ping 2 --json
+uv run --locked csp-lab doctor --json
+uv run --locked csp-lab down
+```
+
+`--build` compiles the native image from this checkout, so it needs the libcsp submodule. Without `--build`, the CLI uses the image matching its own version from GHCR.
+
 ## What is tested
 
 `uv run --locked pytest` checks protocol validation, unavailable Docker, cleanup after a failed start, and unresponsive nodes without requiring Docker. Run `uv run --locked ruff check src/csp_lab tests` and `uv run --locked mypy src/csp_lab` for lint and types. The Docker integration flow exercises real libcsp, ZMQ, CLI diagnostics, and MCP for both protocol versions:
@@ -69,4 +79,4 @@ The GitHub Actions workflow is configured to run both checks on Ubuntu with Dock
 
 ## Scope and license
 
-This lab uses the pinned libcsp release as a build dependency and selects CSP v1 or v2 as a runtime protocol. It does not build against historical libcsp 1.x releases or operate mixed-version networks. ZMQ is the only transport in this lab. The project is licensed under [MIT](LICENSE); the libcsp submodule retains its own license. Image component notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This lab uses the pinned libcsp release as a build dependency and selects CSP v1 or v2 as a runtime protocol. It does not build against historical libcsp 1.x releases or operate mixed-version networks. ZMQ is the only transport in this lab. The project is licensed under [MIT](LICENSE); the libcsp submodule retains its own license. Thanks to the libcsp and ZeroMQ projects that make the image possible; their licenses and source links are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
