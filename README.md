@@ -52,6 +52,28 @@ With `uv tool install`, set the command to `csp-lab` and the argument to `mcp`. 
 
 The stdio server provides `csp_topology`, `csp_ping`, and `csp_diagnose`. It does not expose commands that reboot, shut down, or read or write node memory. The simulated server binds only the CSP ping service port.
 
+## Python tests
+
+The current source checkout also provides a context-managed Python API and an automatically discovered pytest fixture. These are newer than the published `0.1.0` package; use `uv sync --locked` in a clone until the next release.
+
+```python
+from csp_lab import Lab
+
+with Lab(protocol=2) as lab:
+    assert lab.ping(2).reachable
+    print(lab.topology().nodes)
+```
+
+```python
+import pytest
+
+@pytest.mark.csp_lab(protocol=2)
+def test_node_responds(csp_lab):
+    assert csp_lab.ping(2).reachable
+```
+
+Tests using `csp_lab` share a lab for the pytest session by default. Use `@pytest.mark.csp_lab(scope="function")` for a fresh lab per test; protocol 1 and 2 use separate projects. The fixture skips when Docker or Compose is unavailable. An interrupted process can leave containers behind: list their project names with `docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u`, then run `csp-lab cleanup <csp-lab-py-project>` for the affected project.
+
 ## Local development
 
 From a clone of this repository:

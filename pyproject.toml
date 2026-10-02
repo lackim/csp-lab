@@ -18,6 +18,12 @@ dependencies = [
 [project.scripts]
 csp-lab = "csp_lab.cli:run_cli"
 
+[project.optional-dependencies]
+pytest = ["pytest>=8,<10"]
+
+[project.entry-points.pytest11]
+csp_lab = "csp_lab.pytest_plugin"
+
 [dependency-groups]
 dev = [
   "mypy>=1.15,<2",

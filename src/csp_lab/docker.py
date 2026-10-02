@@ -28,10 +28,15 @@ STATE_DIR = STATE_HOME / "csp-lab"
 STATE_FILE = STATE_DIR / "state.json"
 PROJECT = "csp-lab"
 IMAGE = "ghcr.io/lackim/csp-lab"
+OWNED_PROJECT = re.compile(r"csp-lab-py-[0-9a-f]{16}\Z")
 
 
 def selected_image(build: bool) -> str:
     return "csp-lab-native:local" if build else f"{IMAGE}:v{version('csp-lab')}"
+
+
+def project_image(project: str, build: bool) -> str:
+    return f"csp-lab-native:{project}" if build else selected_image(False)
 
 
 def state_image(state: LabState) -> str:
@@ -142,26 +147,29 @@ def compose(
         return run("docker", ["compose", "-p", project, *file_args, *args], env, timeout)
 
 
+def start_project(protocol: Protocol, image: str, project: str, build: bool = False) -> None:
+    if build and (not (ROOT / "Dockerfile").is_file() or not (ROOT / "vendor" / "libcsp").is_dir()):
+        raise RuntimeError("Local build requires a source checkout with the libcsp submodule.")
+    pull = ["--build"] if build else ["--pull", "always"]
+    compose(
+        ["up", "-d", *pull, "hub", "node2", "node3"],
+        protocol,
+        image,
+        600,
+        build_overlay=build,
+        project=project,
+    )
+    for target in (2, 3):
+        if not ping_with_protocol(target, protocol, image, project).reachable:
+            raise RuntimeError(f"Node {target} did not answer a CSP v{protocol} ping.")
+
+
 def up(protocol: Protocol, build: bool = False) -> LabState:
     if get_state() is not None:
         raise RuntimeError("Lab is already started. Run 'csp-lab down' before changing protocol.")
-    if build and (
-        not (ROOT / "Dockerfile").is_file() or not (ROOT / "vendor" / "libcsp").is_dir()
-    ):
-        raise RuntimeError("Local build requires a source checkout with the libcsp submodule.")
     image = selected_image(build)
     try:
-        pull = ["--build"] if build else ["--pull", "always"]
-        compose(
-            ["up", "-d", *pull, "hub", "node2", "node3"],
-            protocol,
-            image,
-            600,
-            build_overlay=build,
-        )
-        for target in (2, 3):
-            if not ping_with_protocol(target, protocol, image).reachable:
-                raise RuntimeError(f"Node {target} did not answer a CSP v{protocol} ping.")
+        start_project(protocol, image, PROJECT, build)
         state = LabState(
             protocol=protocol,
             libcspVersion="2.1",
@@ -200,6 +208,39 @@ def down() -> None:
     shutil.rmtree(state_dir, ignore_errors=True)
 
 
+def cleanup_owned_project(project: str) -> None:
+    if OWNED_PROJECT.fullmatch(project) is None:
+        raise ValueError("Expected a csp-lab-py project name with 16 lowercase hex digits.")
+    errors: list[str] = []
+    try:
+        compose(["down", "--remove-orphans"], 2, project=project)
+    except Exception as exc:
+        errors.append(f"Compose cleanup failed: {exc}")
+    image = project_image(project, True)
+    try:
+        tags = run(
+            "docker",
+            [
+                "image",
+                "ls",
+                "--filter",
+                f"reference={image}",
+                "--format",
+                "{{.Repository}}:{{.Tag}}",
+            ],
+            timeout=30,
+        ).splitlines()
+        if image in tags:
+            run("docker", ["image", "rm", image], timeout=120)
+    except Exception as exc:
+        errors.append(f"Image cleanup failed: {exc}")
+    if errors:
+        raise RuntimeError(
+            f"Could not fully clean {project}. Run 'csp-lab cleanup {project}' to retry. "
+            + " ".join(errors)
+        )
+
+
 def ping_with_protocol(
     target: int, protocol: Protocol, image: str | None = None, project: str = PROJECT
 ) -> PingResult:
@@ -231,29 +272,34 @@ def ping(target: int) -> PingResult:
     return ping_with_protocol(target, state.protocol, state_image(state), state_project(state))
 
 
-def topology() -> TopologyResult:
-    state = require_state()
+def topology_for_protocol(protocol: Protocol) -> TopologyResult:
     return TopologyResult(
-        protocol=state.protocol,
-        libcspVersion=state.libcsp_version,
+        protocol=protocol,
+        libcspVersion="2.1",
         nodes=[2, 3],
         probeAddress=4,
         transport="ZMQ",
     )
 
 
-def diagnose() -> DiagnoseResult:
+def topology() -> TopologyResult:
     state = require_state()
-    nodes = [
-        ping_with_protocol(target, state.protocol, state_image(state), state_project(state))
-        for target in (2, 3)
-    ]
+    return topology_for_protocol(state.protocol)
+
+
+def diagnose_project(protocol: Protocol, image: str, project: str) -> DiagnoseResult:
+    nodes = [ping_with_protocol(target, protocol, image, project) for target in (2, 3)]
     return DiagnoseResult(
-        protocol=state.protocol,
-        libcspVersion=state.libcsp_version,
+        protocol=protocol,
+        libcspVersion="2.1",
         healthy=all(node.reachable for node in nodes),
         nodes=nodes,
     )
+
+
+def diagnose() -> DiagnoseResult:
+    state = require_state()
+    return diagnose_project(state.protocol, state_image(state), state_project(state))
 
 
 def status() -> StatusResult:
