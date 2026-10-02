@@ -257,6 +257,11 @@ dependencies = [
     { name = "typer" },
 ]
 
+[package.optional-dependencies]
+pytest = [
+    { name = "pytest" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -268,8 +273,10 @@ dev = [
 requires-dist = [
     { name = "mcp", specifier = ">=1.20,<2" },
     { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pytest", marker = "extra == 'pytest'", specifier = ">=8,<10" },
     { name = "typer", specifier = ">=0.15,<1" },
 ]
+provides-extras = ["pytest"]
 
 [package.metadata.requires-dev]
 dev = [

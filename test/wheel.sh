@@ -58,3 +58,19 @@ assert all(line.startswith(f"{work}|{image}|") for line in calls)
 assert any("up -d --pull always hub node2 node3" in line for line in calls)
 assert any("-p csp-lab -f " in line for line in calls)
 PY
+
+"$smoke_dir/venv/bin/python" - <<'PY'
+from csp_lab import Lab
+
+with Lab(protocol=2) as lab:
+    assert lab.ping(2).reachable
+    assert lab.topology().nodes == [2, 3]
+    assert lab.diagnose().healthy
+PY
+
+uv pip install --python "$smoke_dir/venv/bin/python" 'pytest>=8,<10'
+cat > "$smoke_dir/work/test_plugin.py" <<'PY'
+def test_auto_discovered_fixture(csp_lab):
+    assert csp_lab.ping(2).reachable
+PY
+"$smoke_dir/venv/bin/python" -m pytest -q "$smoke_dir/work/test_plugin.py"

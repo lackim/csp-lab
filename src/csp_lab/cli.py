@@ -103,6 +103,18 @@ def down(
 
 
 @app.command()
+def cleanup(
+    ctx: typer.Context,
+    project: str = typer.Argument(..., help="Python Lab project to remove"),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON output"),
+) -> None:
+    """Remove an orphaned Python Lab project and its local image."""
+    json_output = _json(ctx, json_output)
+    _action(lambda: docker.cleanup_owned_project(project), json_output)
+    _emit({"cleaned": project}, json_output)
+
+
+@app.command()
 def ping(
     ctx: typer.Context,
     address: str = typer.Argument(..., help="CSP address to ping"),

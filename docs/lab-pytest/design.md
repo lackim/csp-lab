@@ -1,6 +1,6 @@
 # Python Lab API and pytest fixture
 
-> **Status:** Proposed for review
+> **Status:** Accepted
 
 ## 1. Requirements: what and why
 
