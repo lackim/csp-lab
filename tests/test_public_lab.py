@@ -57,6 +57,8 @@ def test_invalid_inputs_and_lifecycle_do_not_probe(monkeypatch: pytest.MonkeyPat
     with lab:
         with pytest.raises(ValueError, match="between 1 and 31"):
             lab.ping(32)
+        with pytest.raises(ValueError, match="Address must be an integer"):
+            lab.ping("2")  # type: ignore[arg-type]
     with pytest.raises(RuntimeError, match="Enter its context"):
         lab.diagnose()
     with pytest.raises(RuntimeError, match="cannot be entered again"):

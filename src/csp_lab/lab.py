@@ -77,6 +77,8 @@ class Lab:
 
     def ping(self, address: int) -> PingResult:
         self._require_active()
+        if type(address) is not int:
+            raise ValueError("Address must be an integer.")
         docker.parse_address(str(address), self.protocol)
         return docker.ping_with_protocol(address, self.protocol, self.image, self.project)
 
