@@ -54,7 +54,7 @@ The stdio server provides `csp_topology`, `csp_ping`, and `csp_diagnose`. It doe
 
 ## Python tests
 
-The current source checkout also provides a context-managed Python API and an automatically discovered pytest fixture. These are newer than the published `0.1.0` package; use `uv sync --locked` in a clone until the next release.
+Version `0.2.0` includes a context-managed Python API and an automatically discovered pytest fixture. Install `csp-lab[pytest]>=0.2.0` in the environment that runs pytest, or use `uv sync --locked` in a source checkout.
 
 ```python
 from csp_lab import Lab

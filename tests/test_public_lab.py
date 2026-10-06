@@ -1,6 +1,7 @@
 """Public Lab ownership, lifecycle, and recovery behavior."""
 
 import re
+from importlib.metadata import version
 
 import pytest
 from typer.testing import CliRunner
@@ -37,7 +38,7 @@ def test_two_labs_are_isolated_and_return_existing_models(monkeypatch: pytest.Mo
         assert probes == [(2, 1, first.project), (2, 2, second.project), (3, 2, second.project)]
 
     assert [item[2] for item in started] == [first.project, second.project]
-    assert all(item[1] == "ghcr.io/lackim/csp-lab:v0.1.0" for item in started)
+    assert all(item[1] == f"ghcr.io/lackim/csp-lab:v{version('csp-lab')}" for item in started)
     assert cleaned == [second.project, first.project]
 
 
