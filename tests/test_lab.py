@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,7 @@ def test_global_options_remain_compatible(lab_root: Path) -> None:
     for args in (["--version"], ["status", "--version"], ["-V"]):
         result = runner.invoke(app, args)
         assert result.exit_code == 0
-        assert result.stdout == "0.1.0\n"
+        assert result.stdout == f"{version('csp-lab')}\n"
 
 
 def test_docker_unavailable(lab_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,7 +90,7 @@ def test_failed_startup_cleans_up(lab_root: Path, monkeypatch: pytest.MonkeyPatc
     assert result.exit_code == 1
     assert "docker exited 17" in json.loads(result.stdout)["error"]
     calls = log.read_text(encoding="utf-8")
-    assert "ghcr.io/lackim/csp-lab:v0.1.0|compose -p csp-lab" in calls
+    assert f"ghcr.io/lackim/csp-lab:v{version('csp-lab')}|compose -p csp-lab" in calls
     assert "up -d --pull always hub node2 node3" in calls
     assert "down --remove-orphans" in calls
     assert not (lab_root / "state" / "csp-lab" / "state.json").exists()

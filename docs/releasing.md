@@ -33,8 +33,8 @@ the version in `pyproject.toml` or points outside `main`.
 3. Create and push a protected annotated tag, for example:
 
    ```sh
-   git tag -a v0.1.0 -m 'csp-lab v0.1.0'
-   git push origin v0.1.0
+   git tag -a v0.2.0 -m 'csp-lab v0.2.0'
+   git push origin v0.2.0
    ```
 
 4. Approve the image job's `release` environment deployment after checking
@@ -44,10 +44,10 @@ the version in `pyproject.toml` or points outside `main`.
 5. Wait for both jobs to finish, then verify from a clean directory:
 
    ```sh
-   uvx csp-lab==0.1.0 up --protocol 2
-   uvx csp-lab==0.1.0 ping 2
-   uvx csp-lab==0.1.0 down
-   gh attestation verify oci://ghcr.io/lackim/csp-lab:v0.1.0 --owner lackim
+   uvx csp-lab==0.2.0 up --protocol 2
+   uvx csp-lab==0.2.0 ping 2
+   uvx csp-lab==0.2.0 down
+   gh attestation verify oci://ghcr.io/lackim/csp-lab:v0.2.0 --owner lackim
    ```
 
 If the image job succeeds and the PyPI job fails, correct package visibility,

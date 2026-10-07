@@ -6,7 +6,7 @@ Three version numbers matter here and they have different meanings:
 | --- | --- | --- |
 | libcsp library and API | v2.1, pinned as a Git submodule commit | Build time |
 | CSP wire protocol | v1 or v2 | `csp-lab up --protocol 1` or `--protocol 2` |
-| csp-lab CLI and MCP API | 0.1.x prototype | Project release |
+| csp-lab CLI, Python, pytest, and MCP API | 0.2.x prototype | Project release |
 
 The current image always builds against libcsp v2.1. Selecting `--protocol 1` changes the wire format used by that library; it does **not** build libcsp 1.x. The two simulated nodes and the probe always use the same protocol setting. A running lab must be stopped before switching protocols.
 
