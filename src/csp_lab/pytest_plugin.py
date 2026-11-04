@@ -11,6 +11,7 @@ from csp_lab.lab import Lab
 from csp_lab.models import Protocol
 
 _TEST_ERROR = pytest.StashKey[BaseException]()
+_LAB = pytest.StashKey[Lab]()
 
 
 @dataclass(frozen=True)
@@ -54,15 +55,28 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--csp-lab-artifacts",
+        default="artifacts/csp-lab",
+        metavar="DIRECTORY",
+        help="Save failed-test CSP diagnostics here; use 'none' to disable.",
+    )
+
+
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> None:
     if call.when in ("setup", "call") and call.excinfo is not None:
         item.stash[_TEST_ERROR] = call.excinfo.value
+        lab = item.stash.get(_LAB, None)
+        if lab is not None and _options_for(item).scope == "session":
+            lab.collect_artifacts(call.excinfo.value)
 
 
 class _Registry:
-    def __init__(self) -> None:
+    def __init__(self, artifacts_dir: str | None) -> None:
         self.labs: dict[tuple[Protocol, bool], Lab] = {}
         self.docker_checked = False
+        self.artifacts_dir = artifacts_dir
 
     def ensure_docker(self) -> None:
         if self.docker_checked:
@@ -78,7 +92,7 @@ class _Registry:
         key = (options.protocol, options.build)
         if key not in self.labs:
             self.ensure_docker()
-            lab = Lab(options.protocol, options.build)
+            lab = Lab(options.protocol, options.build, artifacts_dir=self.artifacts_dir)
             lab.__enter__()
             self.labs[key] = lab
         return self.labs[key]
@@ -96,8 +110,9 @@ class _Registry:
 
 
 @pytest.fixture(scope="session")
-def _csp_lab_registry() -> Iterator[_Registry]:
-    registry = _Registry()
+def _csp_lab_registry(pytestconfig: pytest.Config) -> Iterator[_Registry]:
+    selected = str(pytestconfig.getoption("--csp-lab-artifacts"))
+    registry = _Registry(None if selected == "none" else selected)
     yield registry
     registry.close()
 
@@ -106,10 +121,12 @@ def _csp_lab_registry() -> Iterator[_Registry]:
 def csp_lab(request: pytest.FixtureRequest, _csp_lab_registry: _Registry) -> Iterator[Lab]:
     options = _options_for(request.node)
     if options.scope == "session":
-        yield _csp_lab_registry.get(options)
+        lab = _csp_lab_registry.get(options)
+        request.node.stash[_LAB] = lab
+        yield lab
         return
     _csp_lab_registry.ensure_docker()
-    lab = Lab(options.protocol, options.build)
+    lab = Lab(options.protocol, options.build, artifacts_dir=_csp_lab_registry.artifacts_dir)
     lab.__enter__()
     try:
         yield lab

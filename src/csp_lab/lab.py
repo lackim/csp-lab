@@ -1,5 +1,6 @@
 """Isolated, context-managed CSP lab for Python callers."""
 
+import os
 import secrets
 import sys
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Literal
 
-from csp_lab import docker
+from csp_lab import artifacts, docker
 from csp_lab.models import DiagnoseResult, PingResult, Protocol, TopologyResult
 from csp_lab.nodes import Node, normalize_nodes
 from csp_lab.requests import validate_request
@@ -26,12 +27,23 @@ class Lab:
     _probes: docker.ProbeOwner
 
     def __init__(
-        self, protocol: Protocol = 2, build: bool = False, *, nodes: Sequence[Node] = ()
+        self,
+        protocol: Protocol = 2,
+        build: bool = False,
+        *,
+        nodes: Sequence[Node] = (),
+        artifacts_dir: str | os.PathLike[str] | None = "artifacts/csp-lab",
     ) -> None:
         if type(protocol) is not int or protocol not in (1, 2):
             raise ValueError("Protocol must be 1 or 2.")
         if type(build) is not bool:
             raise ValueError("Build must be a boolean.")
+        if artifacts_dir is not None and (
+            not isinstance(artifacts_dir, (str, os.PathLike))
+            or not isinstance(os.fspath(artifacts_dir), str)
+            or not os.fspath(artifacts_dir)
+        ):
+            raise ValueError("Artifacts directory must be a nonempty path or None.")
         self.protocol = protocol
         self.build = build
         self._nodes: tuple[Node, ...] = normalize_nodes(nodes, protocol)
@@ -43,6 +55,9 @@ class Lab:
         self._images: dict[int, str] = {}
         self._configuration: tempfile.TemporaryDirectory[str] | None = None
         self._compose_file: Path | None = None
+        self.artifacts_dir: Path | None = Path(artifacts_dir) if artifacts_dir is not None else None
+        self._artifact_count: int = 0
+        self._operation: dict[str, str | int] = {"name": "startup"}
 
     @property
     def nodes(self) -> tuple[Node, ...]:
@@ -76,8 +91,9 @@ class Lab:
                     raise RuntimeError(f"Custom-node startup failed ({images}): {exc}") from exc
             else:
                 docker.start_project(self.protocol, self.image, self.project, self.build)
-        except BaseException:
+        except BaseException as exc:
             self._closed = True
+            self.collect_artifacts(exc)
             try:
                 docker.cleanup_owned_project(self.project)
             except Exception as cleanup_error:
@@ -97,12 +113,16 @@ class Lab:
             raise RuntimeError("Lab is not started.")
         self._active = False
         self._closed = True
+        if exc is not None:
+            self.collect_artifacts(exc)
         try:
             docker.cleanup_owned_project(self.project)
         except Exception as cleanup_error:
             if exc is not None:
                 self._report_cleanup_error(cleanup_error)
             else:
+                self._operation = {"name": "cleanup"}
+                self.collect_artifacts(cleanup_error)
                 raise
         finally:
             self._discard_configuration()
@@ -123,6 +143,36 @@ class Lab:
         except Exception:
             pass
 
+    def collect_artifacts(self, error: BaseException | None = None) -> Path | None:
+        """Save a bounded snapshot, including when probe cleanup poisoned the lab.
+
+        Logs are verbatim application output and may contain sensitive data.
+        Collection failure never replaces the caller's original exception.
+        """
+        if self.artifacts_dir is None or self._artifact_count >= 20:
+            return None
+        self._artifact_count += 1
+        try:
+            saved = artifacts.collect_bundle(
+                self.artifacts_dir,
+                self.project,
+                self.protocol,
+                self._addresses,
+                self._images,
+                self._operation.copy(),
+                error,
+            )
+            sys.stderr.write(f"csp-lab: failure artifacts saved to {saved}\n")
+            return saved
+        except BaseException as exc:
+            try:
+                sys.stderr.write(f"csp-lab: artifact capture failed ({type(exc).__name__}).\n")
+            except Exception:
+                pass
+            if error is None and not isinstance(exc, Exception):
+                raise
+            return None
+
     def _require_active(self) -> None:
         if not self._active:
             raise RuntimeError("Lab is not started. Enter its context first.")
@@ -133,6 +183,7 @@ class Lab:
         if type(address) is not int:
             raise ValueError("Address must be an integer.")
         docker.parse_address(str(address), self.protocol)
+        self._operation = {"name": "ping", "address": address}
         return docker.ping_with_protocol(
             address, self.protocol, self.image, self.project, owner=self._probes
         )
@@ -143,6 +194,7 @@ class Lab:
 
     def diagnose(self) -> DiagnoseResult:
         self._require_active()
+        self._operation = {"name": "diagnose"}
         return docker.diagnose_project(
             self.protocol, self.image, self.project, owner=self._probes, images=self._images
         )
@@ -160,6 +212,12 @@ class Lab:
         self._require_active()
         self._custom_address(address)
         validate_request(port, payload, timeout_ms)
+        self._operation = {
+            "name": "request",
+            "address": address,
+            "port": port,
+            "timeoutMs": timeout_ms,
+        }
         return docker.request_with_protocol(
             address, port, payload, timeout_ms, self.protocol, self.image, self._probes
         )
@@ -168,6 +226,7 @@ class Lab:
         """Stop one custom container without removing it or changing topology."""
         self._require_active()
         self._custom_address(address)
+        self._operation = {"name": "stop_node", "address": address}
         assert self._compose_file is not None
         docker.change_node_state(
             address, False, self.protocol, self.image, self.project, self._compose_file
@@ -177,6 +236,7 @@ class Lab:
         """Start the original container and wait for its CSP ping readiness."""
         self._require_active()
         self._custom_address(address)
+        self._operation = {"name": "start_node", "address": address}
         assert self._compose_file is not None
         docker.change_node_state(
             address, True, self.protocol, self.image, self.project, self._compose_file

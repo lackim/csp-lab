@@ -87,7 +87,7 @@ def test_image_failure_cleans_project_without_creating_containers(monkeypatch: p
 
     monkeypatch.setattr(docker, "run", fail)
     monkeypatch.setattr(docker, "cleanup_owned_project", cleaned.append)
-    lab = Lab(nodes=(Node(5, "bad image"),))
+    lab = Lab(nodes=(Node(5, "bad image"),), artifacts_dir=None)
     with pytest.raises(RuntimeError, match="Could not prepare.*bad image"):
         with lab:
             pass
@@ -257,7 +257,7 @@ def test_custom_startup_failure_reports_images_and_removes_temporary_configurati
 
     monkeypatch.setattr(docker, "start_custom_project", fail)
     monkeypatch.setattr(docker, "cleanup_owned_project", cleanup)
-    lab = Lab(nodes=(Node(5, "incompatible:dev"),))
+    lab = Lab(nodes=(Node(5, "incompatible:dev"),), artifacts_dir=None)
     with pytest.raises(RuntimeError, match="5='incompatible:dev'.*exec format error"):
         with lab:
             pass
