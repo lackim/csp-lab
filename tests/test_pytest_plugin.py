@@ -215,8 +215,14 @@ def test_failed_tests_capture_before_cleanup_and_shared_lab_survives(pytester):
             assert [event[0] for event in conftest.events] == ['start', 'capture']
             assert csp_lab._active
 
+        @pytest.fixture
+        def reset_application(csp_lab):
+            yield csp_lab
+            # A real fixture can remove/reset the application container here.
+            conftest.events.append(('reset', csp_lab.project))
+
         @pytest.mark.csp_lab(scope='function')
-        def test_function_failure(csp_lab):
+        def test_function_failure(reset_application):
             raise ValueError('body secret')
 
         @pytest.fixture
@@ -235,6 +241,7 @@ def test_failed_tests_capture_before_cleanup_and_shared_lab_survives(pytester):
         "capture",
         "start",
         "capture",
+        "reset",
         "cleanup",
         "start",
         "capture",

@@ -57,6 +57,7 @@ class Lab:
         self._compose_file: Path | None = None
         self.artifacts_dir: Path | None = Path(artifacts_dir) if artifacts_dir is not None else None
         self._artifact_count: int = 0
+        self._captured_context_error: BaseException | None = None
         self._operation: dict[str, str | int] = {"name": "startup"}
 
     @property
@@ -113,7 +114,7 @@ class Lab:
             raise RuntimeError("Lab is not started.")
         self._active = False
         self._closed = True
-        if exc is not None:
+        if exc is not None and self._captured_context_error is not exc:
             self.collect_artifacts(exc)
         try:
             docker.cleanup_owned_project(self.project)
@@ -125,6 +126,7 @@ class Lab:
                 self.collect_artifacts(cleanup_error)
                 raise
         finally:
+            self._captured_context_error = None
             self._discard_configuration()
         return False
 

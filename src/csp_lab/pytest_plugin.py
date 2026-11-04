@@ -68,8 +68,12 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     if call.when in ("setup", "call") and call.excinfo is not None:
         item.stash[_TEST_ERROR] = call.excinfo.value
         lab = item.stash.get(_LAB, None)
-        if lab is not None and _options_for(item).scope == "session":
+        if lab is not None:
             lab.collect_artifacts(call.excinfo.value)
+            if _options_for(item).scope == "function":
+                # Keep the original error for cleanup semantics while avoiding
+                # a second snapshot from Lab.__exit__ after fixture teardown.
+                lab._captured_context_error = call.excinfo.value
 
 
 class _Registry:
@@ -128,6 +132,7 @@ def csp_lab(request: pytest.FixtureRequest, _csp_lab_registry: _Registry) -> Ite
     _csp_lab_registry.ensure_docker()
     lab = Lab(options.protocol, options.build, artifacts_dir=_csp_lab_registry.artifacts_dir)
     lab.__enter__()
+    request.node.stash[_LAB] = lab
     try:
         yield lab
     finally:
