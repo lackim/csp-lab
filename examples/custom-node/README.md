@@ -52,8 +52,8 @@ skips. This variant echoes the input instead of uppercasing it. Its failure
 bundles remain under `artifacts/csp-lab` after the containers are removed.
 `CSP_LAB_EXAMPLE_IMAGE` selects an image; `CSP_LAB_EXAMPLE_BUILD=0` selects the
 published native image matching the installed package instead of a local build.
-Custom-node support requires csp-lab 0.3.0 or newer; while developing this release,
-use the checkout and the default local build.
+Custom-node support requires csp-lab 0.3.0 or newer. Use the checkout and the
+default local build when developing native changes.
 
 You can also configure a test directly:
 

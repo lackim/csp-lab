@@ -33,8 +33,8 @@ the version in `pyproject.toml` or points outside `main`.
 3. Create and push a protected annotated tag, for example:
 
    ```sh
-   git tag -a v0.2.0 -m 'csp-lab v0.2.0'
-   git push origin v0.2.0
+   git tag -a v0.3.0 -m 'csp-lab v0.3.0'
+   git push origin v0.3.0
    ```
 
 4. Approve the image job's `release` environment deployment after checking
@@ -44,11 +44,33 @@ the version in `pyproject.toml` or points outside `main`.
 5. Wait for both jobs to finish, then verify from a clean directory:
 
    ```sh
-   uvx csp-lab==0.2.0 up --protocol 2
-   uvx csp-lab==0.2.0 ping 2
-   uvx csp-lab==0.2.0 down
-   gh attestation verify oci://ghcr.io/lackim/csp-lab:v0.2.0 --owner lackim
+   uvx csp-lab==0.3.0 up --protocol 2
+   uvx csp-lab==0.3.0 ping 2
+   uvx csp-lab==0.3.0 down
+   gh attestation verify oci://ghcr.io/lackim/csp-lab:v0.3.0 --owner lackim
    ```
+
+   For 0.3.0, also build the independent application and run its pytest suite
+   against the published native image from a clean virtual environment:
+
+   ```sh
+   docker build -f examples/custom-node/Dockerfile -t uppercase-node:dev .
+   csp_release_checkout=$(pwd)
+   csp_release_check=$(mktemp -d)
+   uv venv "$csp_release_check/venv"
+   uv pip install --python "$csp_release_check/venv/bin/python" 'csp-lab[pytest]==0.3.0'
+   (
+     cd "$csp_release_check"
+     CSP_LAB_EXAMPLE_BUILD=0 "$csp_release_check/venv/bin/python" -m pytest -q \
+       "$csp_release_checkout/examples/custom-node/tests"
+   )
+   ```
+
+   The image build uses the release checkout with its pinned submodule. Run
+   pytest from the separate temporary working directory using the absolute path
+   to the example tests exercises the installed package and packaged Compose
+   files. Require all six cases to pass with no skips for both wire
+   protocols. Keep any reported failure-artifact directories until investigated.
 
 If the image job succeeds and the PyPI job fails, correct package visibility,
 the trusted publisher, or the package issue and rerun the failed job. The tag

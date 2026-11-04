@@ -6,9 +6,13 @@ Three version numbers matter here and they have different meanings:
 | --- | --- | --- |
 | libcsp library and API | v2.1, pinned as a Git submodule commit | Build time |
 | CSP wire protocol | v1 or v2 | `csp-lab up --protocol 1` or `--protocol 2` |
-| csp-lab CLI, Python, pytest, and MCP API | 0.2.x prototype | Project release |
+| csp-lab CLI, Python, pytest, and MCP API | 0.3.x prototype | Project release |
 
 The current image always builds against libcsp v2.1. Selecting `--protocol 1` changes the wire format used by that library; it does **not** build libcsp 1.x. The two simulated nodes and the probe always use the same protocol setting. A running lab must be stopped before switching protocols.
+
+Version 0.3 adds custom application images, raw request/reply, and pytest failure
+diagnostics. Use the native image matching the Python package version; 0.2 images
+do not implement the request mode. See the [0.3.0 changes](https://github.com/lackim/csp-lab/blob/main/docs/releases/0.3.0.md).
 
 ## Updating libcsp 2.x
 
