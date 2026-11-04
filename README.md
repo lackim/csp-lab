@@ -27,6 +27,8 @@ The native code is built against the pinned `libcsp` v2.1 submodule. That librar
 
 Lab state is stored in `~/.local/state/csp-lab` or under `XDG_STATE_HOME` when set, so commands work from any directory.
 
+Start and stop operations using the same state directory are protected by a process lock. An overlapping operation fails with a retry message. State is saved atomically; if a state file is corrupt or unsupported, `csp-lab down` can still stop the lab and remove that file. If `down` cannot finish Docker cleanup, it retains the state so you can retry.
+
 If a lab was started by the earlier checkout-based CLI, run `csp-lab down` from that checkout once before switching to `uvx` from another directory. The CLI recognizes and removes the earlier path-based Docker project there.
 
 To test CSP v1, start a fresh lab with `up --protocol 1`. `up` refuses to change the protocol of an existing lab; run `down` first. The two versions never share a running network.
@@ -97,7 +99,7 @@ uv run --locked csp-lab down
 bash test/integration.sh
 ```
 
-The GitHub Actions workflow is configured to run both checks on Ubuntu with Docker Compose. The local integration script stops the lab on exit, including after a failure.
+The GitHub Actions workflow is configured to run both checks on Ubuntu with Docker Compose. The integration script uses its own temporary `XDG_STATE_HOME` and unique `CSP_LAB_PROJECT`, and cleans only those resources on exit, including after a failure. It does not adopt checkout-based legacy labs. If cleanup fails, it reports the project and retains the temporary state for recovery.
 
 ## Scope and license
 

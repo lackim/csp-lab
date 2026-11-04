@@ -14,15 +14,6 @@ from csp_lab.cli import app
 runner = CliRunner()
 
 
-@pytest.fixture
-def lab_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(docker, "ROOT", tmp_path)
-    monkeypatch.setattr(docker, "STATE_DIR", tmp_path / "state" / "csp-lab")
-    monkeypatch.setattr(docker, "STATE_FILE", tmp_path / "state" / "csp-lab" / "state.json")
-    (tmp_path / "bin").mkdir()
-    return tmp_path
-
-
 def put_state(root: Path, protocol: int = 2, build: bool = False, image: str | None = None) -> None:
     state_dir = root / "state" / "csp-lab"
     state_dir.mkdir(parents=True)
