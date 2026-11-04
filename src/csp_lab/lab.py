@@ -11,6 +11,7 @@ from typing import Literal
 from csp_lab import docker
 from csp_lab.models import DiagnoseResult, PingResult, Protocol, TopologyResult
 from csp_lab.nodes import Node, normalize_nodes
+from csp_lab.requests import validate_request
 
 
 class Lab:
@@ -149,6 +150,19 @@ class Lab:
     def _custom_address(self, address: int) -> None:
         if type(address) is not int or address not in self._addresses:
             raise ValueError("Address must identify a configured custom node.")
+
+    def request(self, address: int, *, port: int, payload: bytes, timeout_ms: int = 1500) -> bytes:
+        """Send once and return one raw reply, including a possible empty packet.
+
+        A timeout does not prove the service did not execute the request. Include
+        application request IDs if late replies need transaction correlation.
+        """
+        self._require_active()
+        self._custom_address(address)
+        validate_request(port, payload, timeout_ms)
+        return docker.request_with_protocol(
+            address, port, payload, timeout_ms, self.protocol, self.image, self._probes
+        )
 
     def stop_node(self, address: int) -> None:
         """Stop one custom container without removing it or changing topology."""

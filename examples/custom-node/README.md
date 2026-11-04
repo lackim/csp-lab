@@ -17,6 +17,7 @@ for protocol in (1, 2):
              nodes=(Node(address=5, image="uppercase-node:dev"),)) as lab:
         assert lab.ping(5).reachable
         assert lab.topology().nodes == [2, 3, 5]
+        assert lab.request(5, port=10, payload=b"hello\x00world\xff") == b"HELLO\x00WORLD\xff"
         lab.stop_node(5)
         assert not lab.ping(5).reachable
         lab.start_node(5)
@@ -24,7 +25,39 @@ for protocol in (1, 2):
 PY
 ```
 
-The request/reply API and pytest application examples follow in the next slice.
+Pytest application examples follow in the next slice.
+
+`lab.request(address, *, port, payload, timeout_ms=1500)` sends one packet and
+returns one raw `bytes` reply, including an empty reply. The address must name a
+configured custom node, the port must be an integer in 10–63, payload must be
+`bytes` of length 0–256, and timeout must be an integer in 100–10000 ms. Wrong
+types, booleans in integer fields, and out-of-range values fail before a probe
+starts. The service's content is returned for your assertion to check.
+
+No reply raises `from csp_lab import RequestTimeout`, a `TimeoutError` subclass
+with `address`, `port`, and `timeout_ms` attributes. A timeout does not prove that
+the service did not execute the request. There are no application retries or
+extra application headers. Calls on one lab are sequential. Include your own
+request ID if you need correlation across timeouts and late replies:
+
+```python
+import secrets
+
+payload = b"hello:" + secrets.token_bytes(8)
+assert lab.request(5, port=10, payload=payload) == payload.upper()
+```
+
+The network deadline begins when the prepared probe sends. Docker setup and ZMQ
+subscription settling add latency outside that deadline, with a separate
+30-second setup budget plus the requested timeout and up to five seconds for
+confirmed probe removal. Docker or malformed-probe failures raise `RuntimeError`.
+Requests use hexadecimal stdin without a TTY, keeping payloads out of command
+arguments and error messages. A result is returned only after its probe is gone;
+uncertain cleanup disables the lab and supplies a scoped recovery command.
+
+The optional Docker build argument `TESTING=ON` enables internal integration
+instrumentation (request counts, dropped replies, and malformed frames). Normal
+images expose only the uppercase service and standard CSP services.
 
 `Node` preserves the image's ENTRYPOINT, CMD, and user. The lab supplies:
 

@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#ifdef CSP_LAB_EXAMPLE_TESTING
+#include "test_services.h"
+#endif
+
 static void *route(void *unused) {
     (void)unused;
     while (true) csp_route_work();
@@ -56,6 +60,12 @@ int main(void) {
     iface->is_default = 1;
     if (csp_rtable_set(0, 0, iface, CSP_NO_VIA_ADDRESS) != CSP_ERR_NONE) return 1;
 
+#ifdef CSP_LAB_EXAMPLE_TESTING
+    void *raw_context = zmq_ctx_new();
+    raw_publisher = zmq_socket(raw_context, ZMQ_PUB);
+    if (raw_publisher == NULL || zmq_connect(raw_publisher, publish) != 0) return 1;
+#endif
+
     csp_socket_t socket = {0};
     if (csp_bind(&socket, CSP_ANY) != CSP_ERR_NONE || csp_listen(&socket, 8) != CSP_ERR_NONE)
         return 1;
@@ -66,6 +76,9 @@ int main(void) {
         if (conn == NULL) continue;
         csp_packet_t *packet;
         while ((packet = csp_read(conn, 100)) != NULL) {
+#ifdef CSP_LAB_EXAMPLE_TESTING
+            if (test_service(conn, packet, (uint16_t)address)) continue;
+#endif
             if (csp_conn_dport(conn) != 10) {
                 csp_service_handler(packet);
                 continue;
