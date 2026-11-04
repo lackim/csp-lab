@@ -3,7 +3,9 @@
 .csp-lab
 node_modules
 dist
-test
+test/*
+!test/native-bounds
+!test/native-bounds/**
 skills-lock.json
 vendor/libcsp/.git
 .venv
