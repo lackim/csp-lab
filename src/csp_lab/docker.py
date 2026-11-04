@@ -27,6 +27,7 @@ from csp_lab.models import (
     StatusResult,
     TopologyResult,
 )
+from csp_lab.nodes import Node
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
@@ -191,6 +192,7 @@ def compose(
     timeout: float = 120,
     build_overlay: bool = False,
     project: str = PROJECT,
+    extra_file: Path | None = None,
 ) -> str:
     if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project) is None:
         raise ValueError("Compose project must contain lowercase letters, digits, '_' or '-'.")
@@ -198,6 +200,8 @@ def compose(
     with ExitStack() as stack:
         compose_file = stack.enter_context(as_file(files("csp_lab") / "data" / "compose.yaml"))
         file_args = ["-f", str(compose_file)]
+        if extra_file is not None:
+            file_args.extend(["-f", str(extra_file)])
         if build_overlay:
             if not (ROOT / "Dockerfile").is_file() or not (ROOT / "vendor" / "libcsp").is_dir():
                 raise RuntimeError(
@@ -422,6 +426,115 @@ def start_project(protocol: Protocol, image: str, project: str, build: bool = Fa
             raise RuntimeError(f"Node {target} did not answer a CSP v{protocol} ping.")
 
 
+def resolve_node_images(nodes: tuple[Node, ...]) -> dict[int, str]:
+    """Use local images unchanged, pulling missing images before project creation."""
+    resolved: dict[str, str] = {}
+    for node in nodes:
+        if node.image in resolved:
+            continue
+        try:
+            try:
+                identity = run("docker", ["image", "inspect", "--format", "{{.Id}}", node.image])
+            except RuntimeError:
+                run("docker", ["image", "pull", node.image], timeout=600)
+                identity = run("docker", ["image", "inspect", "--format", "{{.Id}}", node.image])
+            identity = identity.strip()
+            if re.fullmatch(r"sha256:[0-9a-f]{64}", identity) is None:
+                raise RuntimeError("Docker returned an invalid image ID.")
+            resolved[node.image] = identity
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not prepare custom node image {node.image!r}: {exc}"
+            ) from exc
+    return {node.address: resolved[node.image] for node in nodes}
+
+
+def write_node_overlay(path: Path, protocol: Protocol, images: dict[int, str]) -> None:
+    services = {
+        f"custom{address}": {
+            "image": identity,
+            "depends_on": ["hub"],
+            "environment": {
+                "CSP_LAB_PROTOCOL": str(protocol),
+                "CSP_LAB_ADDRESS": str(address),
+                "CSP_LAB_ZMQ_PUBLISH_ENDPOINT": "tcp://hub:6000",
+                "CSP_LAB_ZMQ_SUBSCRIBE_ENDPOINT": "tcp://hub:7000",
+            },
+        }
+        for address, identity in images.items()
+    }
+    path.write_text(json.dumps({"services": services}), encoding="utf-8")
+
+
+def wait_for_nodes(
+    targets: tuple[int, ...], protocol: Protocol, image: str, project: str, owner: ProbeOwner
+) -> None:
+    deadline = time.monotonic() + 30
+    pending = list(targets)
+    while pending:
+        for target in tuple(pending):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"Nodes {pending} did not answer CSP v{protocol} ping within 30s."
+                )
+            if ping_with_protocol(
+                target, protocol, image, project, owner=owner, timeout=remaining
+            ).reachable:
+                pending.remove(target)
+        if pending:
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
+
+def start_custom_project(
+    protocol: Protocol,
+    image: str,
+    project: str,
+    build: bool,
+    extra_file: Path,
+    addresses: tuple[int, ...],
+    owner: ProbeOwner,
+) -> None:
+    # Prepare the native image separately so --pull cannot replace locally
+    # resolved custom images, and the readiness budget excludes build/pull time.
+    if build:
+        compose(["build", "hub"], protocol, image, 600, build_overlay=True, project=project)
+    else:
+        run("docker", ["image", "pull", image], timeout=600)
+    compose(
+        [
+            "up",
+            "-d",
+            "--no-build",
+            "--pull",
+            "never",
+            "hub",
+            "node2",
+            "node3",
+            *(f"custom{address}" for address in addresses),
+        ],
+        protocol,
+        image,
+        project=project,
+        extra_file=extra_file,
+    )
+    wait_for_nodes((2, 3, *addresses), protocol, image, project, owner)
+
+
+def change_node_state(
+    address: int, start: bool, protocol: Protocol, image: str, project: str, extra_file: Path
+) -> None:
+    # Compose start uses the existing container rather than recreating from a
+    # mutable tag. A repeated stop/start is harmless.
+    compose(
+        ["start" if start else "stop", f"custom{address}"],
+        protocol,
+        image,
+        project=project,
+        extra_file=extra_file,
+    )
+
+
 def up(protocol: Protocol, build: bool = False) -> LabState:
     with _state_lock():
         if get_state() is not None:
@@ -508,6 +621,7 @@ def ping_with_protocol(
     project: str = PROJECT,
     *,
     owner: ProbeOwner | None = None,
+    timeout: float = 30,
 ) -> PingResult:
     parse_address(str(target), protocol)
     if owner is not None and owner.project != project:
@@ -516,6 +630,7 @@ def ping_with_protocol(
     output = probe.execute(
         ["probe", str(protocol), "4", str(target)],
         image or selected_image(False),
+        timeout=timeout,
     )
     line = next(
         (part for part in reversed(output.splitlines()) if part.startswith('{"target":')),
@@ -537,11 +652,11 @@ def ping(target: int) -> PingResult:
     return ping_with_protocol(target, state.protocol, state_image(state), state_project(state))
 
 
-def topology_for_protocol(protocol: Protocol) -> TopologyResult:
+def topology_for_protocol(protocol: Protocol, addresses: tuple[int, ...] = ()) -> TopologyResult:
     return TopologyResult(
         protocol=protocol,
         libcspVersion="2.1",
-        nodes=[2, 3],
+        nodes=sorted((2, 3, *addresses)),
         probeAddress=4,
         transport="ZMQ",
     )
@@ -558,13 +673,18 @@ def diagnose_project(
     project: str,
     *,
     owner: ProbeOwner | None = None,
+    images: dict[int, str] | None = None,
 ) -> DiagnoseResult:
-    nodes = [ping_with_protocol(target, protocol, image, project, owner=owner) for target in (2, 3)]
+    nodes = [
+        ping_with_protocol(target, protocol, image, project, owner=owner)
+        for target in sorted((2, 3, *(images or {})))
+    ]
     return DiagnoseResult(
         protocol=protocol,
         libcspVersion="2.1",
         healthy=all(node.reachable for node in nodes),
         nodes=nodes,
+        imageIds=images or {},
     )
 
 

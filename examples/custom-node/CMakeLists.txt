@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(uppercase_node C)
+find_package(Threads REQUIRED)
+# Reuse the pinned, bounds-patched library build, not the demo application.
+add_subdirectory(../.. "${CMAKE_CURRENT_BINARY_DIR}/lab")
+add_executable(uppercase-node main.c)
+target_link_libraries(uppercase-node PRIVATE csp csp_common Threads::Threads)

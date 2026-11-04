@@ -81,3 +81,4 @@ uv run --locked csp-lab cleanup "$recovery_project"
 : > "$recovery_file"
 
 uv run --locked python tests/probe_recovery.py
+uv run --locked python tests/custom_node_lifecycle.py
