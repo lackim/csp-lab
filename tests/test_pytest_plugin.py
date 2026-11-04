@@ -22,7 +22,7 @@ def test_fixture_shares_by_configuration_and_obeys_marker_precedence(
             (protocol, project, build)
         )
         docker.cleanup_owned_project = cleaned.append
-        docker.ping_with_protocol = lambda target, protocol, image, project: PingResult(
+        docker.ping_with_protocol = lambda target, protocol, image, project, **kwargs: PingResult(
             target=target, reachable=True, rttMs=1
         )
 

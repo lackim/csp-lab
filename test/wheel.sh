@@ -12,6 +12,21 @@ mkdir -p "$smoke_dir/bin" "$smoke_dir/work"
 cat > "$smoke_dir/bin/docker" <<'SH'
 #!/bin/sh
 printf '%s|%s|%s\n' "$PWD" "$CSP_LAB_IMAGE" "$*" >> "$CSP_LAB_FAKE_LOG"
+case "$1 $2" in
+  'network ls') printf '%s\n' network-id; exit 0;;
+  'container ls') exit 0;;
+  'container create')
+    for arg do target=$arg; done
+    printf '%s\n' "$target" > "$CSP_LAB_FAKE_LOG.target"
+    printf '%064d\n' 1
+    exit 0;;
+  'container start')
+    read -r target < "$CSP_LAB_FAKE_LOG.target"
+    case "$target" in
+      2|3) printf '{"target":%s,"reachable":true,"rttMs":1}\n' "$target";;
+    esac
+    exit 0;;
+esac
 for argument do
   if [ "$argument" = "-f" ]; then
     check_next=1
@@ -54,7 +69,9 @@ calls = Path(sys.argv[1]).read_text().splitlines()
 work = sys.argv[2]
 assert calls
 image = f"ghcr.io/lackim/csp-lab:v{version('csp-lab')}"
-assert all(line.startswith(f"{work}|{image}|") for line in calls)
+assert all(line.startswith(f"{work}|") for line in calls)
+assert all(line.startswith(f"{work}|{image}|") for line in calls if "|compose " in line)
+assert any(image in line and "|container create " in line for line in calls)
 assert any("up -d --pull always hub node2 node3" in line for line in calls)
 assert any("-p csp-lab -f " in line for line in calls)
 PY

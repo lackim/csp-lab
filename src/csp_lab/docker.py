@@ -4,9 +4,12 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from importlib.metadata import version
@@ -162,7 +165,7 @@ def require_state() -> LabState:
 
 
 def run(
-    command: str, args: list[str], env: dict[str, str] | None = None, timeout: int = 120
+    command: str, args: list[str], env: dict[str, str] | None = None, timeout: float = 120
 ) -> str:
     try:
         result = subprocess.run(
@@ -185,7 +188,7 @@ def compose(
     args: list[str],
     protocol: Protocol,
     image: str | None = None,
-    timeout: int = 120,
+    timeout: float = 120,
     build_overlay: bool = False,
     project: str = PROJECT,
 ) -> str:
@@ -206,6 +209,200 @@ def compose(
             file_args.extend(["-f", str(build_file)])
             env["CSP_LAB_BUILD_CONTEXT"] = str(ROOT)
         return run("docker", ["compose", "-p", project, *file_args, *args], env, timeout)
+
+
+def _docker_before(deadline: float, args: list[str]) -> str:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("Probe cleanup exceeded five seconds.")
+    return run("docker", args, timeout=remaining)
+
+
+def _probe_ids(
+    project: str,
+    deadline: float,
+    name: str | None = None,
+    container: str | None = None,
+) -> list[str]:
+    args = ["container", "ls", "--all", "--quiet", "--no-trunc"]
+    if container is not None:
+        args.extend(["--filter", f"id={container}"])
+    elif name is not None:
+        args.extend(["--filter", f"name=^/{name}$"])
+    else:
+        args.extend(
+            [
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+                "--filter",
+                "label=com.docker.compose.service=probe",
+            ]
+        )
+    return _docker_before(deadline, args).splitlines()
+
+
+def _remove_probe_id(container: str, project: str, deadline: float) -> None:
+    labels = json.loads(
+        _docker_before(
+            deadline,
+            [
+                "container",
+                "inspect",
+                "--format",
+                "{{json .Config.Labels}}",
+                container,
+            ],
+        )
+    )
+    if not isinstance(labels, dict) or (
+        labels.get("com.docker.compose.project") != project
+        or labels.get("com.docker.compose.service") != "probe"
+    ):
+        raise RuntimeError(
+            "Refusing to remove a container without matching probe ownership labels."
+        )
+    _docker_before(deadline, ["container", "rm", "--force", container])
+
+
+def cleanup_project_probes(project: str) -> None:
+    """Remove daemon-owned one-offs that Compose may leave after a killed client."""
+    deadline = time.monotonic() + 5
+    for container in _probe_ids(project, deadline):
+        _remove_probe_id(container, project, deadline)
+    if _probe_ids(project, deadline):
+        raise RuntimeError("Project probe removal could not be confirmed.")
+
+
+class ProbeOwner:
+    """Keep one lab unusable if an interrupted probe cannot be accounted for."""
+
+    def __init__(self, project: str) -> None:
+        if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project) is None:
+            raise ValueError("Invalid probe project name.")
+        self.project = project
+        self._failure: str | None = None
+
+    def require_usable(self) -> None:
+        if self._failure is not None:
+            raise RuntimeError(self._failure)
+
+    def _recovery(self) -> str:
+        if OWNED_PROJECT.fullmatch(self.project):
+            return f"csp-lab cleanup {self.project}"
+        return "csp-lab down"
+
+    def _finish(self, name: str, confirmed: str | None, primary: BaseException | None) -> None:
+        try:
+            deadline = time.monotonic() + 5
+            containers = _probe_ids(self.project, deadline, name, confirmed)
+            for container in containers:
+                _remove_probe_id(container, self.project, deadline)
+            if _probe_ids(self.project, deadline, name, confirmed):
+                raise RuntimeError("Probe container is still present.")
+            if not confirmed and not containers:
+                # A timed-out create may still finish at the daemon. It cannot
+                # send packets: only the separate, acknowledged start can do so.
+                raise RuntimeError("Container creation was not acknowledged.")
+        except BaseException as exc:
+            self._failure = (
+                f"Probe cleanup is unconfirmed for {self.project}; this lab is unusable. "
+                f"Run '{self._recovery()}' to recover. {exc}"
+            )
+            if primary is not None and not isinstance(primary, Exception):
+                try:
+                    sys.stderr.write(self._failure + "\n")
+                except Exception:
+                    pass
+            elif not isinstance(exc, Exception):
+                try:
+                    sys.stderr.write(self._failure + "\n")
+                except Exception:
+                    pass
+                raise
+            else:
+                raise RuntimeError(self._failure) from (primary or exc)
+
+    def execute(self, command: list[str], image: str, timeout: float = 30) -> str:
+        self.require_usable()
+        deadline = time.monotonic() + timeout
+        try:
+            networks = run(
+                "docker",
+                [
+                    "network",
+                    "ls",
+                    "--quiet",
+                    "--filter",
+                    f"label=com.docker.compose.project={self.project}",
+                    "--filter",
+                    "label=com.docker.compose.network=default",
+                ],
+                timeout=min(10, timeout),
+            ).splitlines()
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Probe network lookup exceeded its deadline for {self.project}."
+            ) from exc
+        if len(networks) != 1:
+            raise RuntimeError("Expected one private Compose network for the lab.")
+        name = f"{self.project}-probe-{secrets.token_hex(8)}"
+        confirmed: str | None = None
+        primary: BaseException | None = None
+        try:
+            container = run(
+                "docker",
+                [
+                    "container",
+                    "create",
+                    "--name",
+                    name,
+                    "--interactive",
+                    "--label",
+                    f"com.docker.compose.project={self.project}",
+                    "--label",
+                    "com.docker.compose.service=probe",
+                    "--label",
+                    "com.docker.compose.oneoff=True",
+                    "--network",
+                    networks[0],
+                    image,
+                    *command,
+                ],
+                timeout=max(0.001, deadline - time.monotonic()),
+            ).strip()
+            if re.fullmatch(r"[0-9a-f]{64}", container) is None:
+                raise RuntimeError("Docker returned an invalid probe container ID.")
+            confirmed = container
+            return run(
+                "docker",
+                ["container", "start", "--attach", "--interactive", container],
+                timeout=max(0.001, deadline - time.monotonic()),
+            )
+        except subprocess.TimeoutExpired as exc:
+            primary = RuntimeError(
+                f"Probe command exceeded its deadline for {self.project}. "
+                f"Run '{self._recovery()}' if recovery is needed."
+            )
+            raise primary from exc
+        except BaseException as exc:
+            primary = exc
+            raise
+        finally:
+            self._finish(name, confirmed, primary)
+
+
+def stop_project(protocol: Protocol, image: str | None, project: str) -> None:
+    errors: list[str] = []
+    try:
+        cleanup_project_probes(project)
+    except Exception as exc:
+        errors.append(f"Probe cleanup failed: {exc}")
+    try:
+        compose(["down", "--remove-orphans"], protocol, image, project=project)
+    except Exception as exc:
+        errors.append(f"Compose cleanup failed: {exc}")
+    if errors:
+        raise RuntimeError(" ".join(errors))
 
 
 def start_project(protocol: Protocol, image: str, project: str, build: bool = False) -> None:
@@ -245,7 +442,7 @@ def up(protocol: Protocol, build: bool = False) -> LabState:
             return state
         except BaseException:
             try:
-                compose(["down", "--remove-orphans"], protocol, image, project=PROJECT)
+                stop_project(protocol, image, PROJECT)
             except Exception:
                 pass
             shutil.rmtree(STATE_DIR, ignore_errors=True)
@@ -263,11 +460,10 @@ def down() -> None:
         else:
             state_dir = state.legacy_root / ".csp-lab" if state and state.legacy_root else STATE_DIR
             project = state_project(state) if state else PROJECT
-        compose(
-            ["down", "--remove-orphans"],
+        stop_project(
             state.protocol if state else 2,
             state_image(state) if state else None,
-            project=project,
+            project,
         )
         shutil.rmtree(state_dir, ignore_errors=True)
 
@@ -277,9 +473,9 @@ def cleanup_owned_project(project: str) -> None:
         raise ValueError("Expected a csp-lab-py project name with 16 lowercase hex digits.")
     errors: list[str] = []
     try:
-        compose(["down", "--remove-orphans"], 2, project=project)
+        stop_project(2, None, project)
     except Exception as exc:
-        errors.append(f"Compose cleanup failed: {exc}")
+        errors.append(f"Project cleanup failed: {exc}")
     image = project_image(project, True)
     try:
         tags = run(
@@ -306,15 +502,20 @@ def cleanup_owned_project(project: str) -> None:
 
 
 def ping_with_protocol(
-    target: int, protocol: Protocol, image: str | None = None, project: str = PROJECT
+    target: int,
+    protocol: Protocol,
+    image: str | None = None,
+    project: str = PROJECT,
+    *,
+    owner: ProbeOwner | None = None,
 ) -> PingResult:
     parse_address(str(target), protocol)
-    output = compose(
-        ["run", "--rm", "--no-deps", "probe", "probe", str(protocol), "4", str(target)],
-        protocol,
-        image,
-        30,
-        project=project,
+    if owner is not None and owner.project != project:
+        raise ValueError("Probe owner does not match the requested project.")
+    probe = owner if owner is not None else ProbeOwner(project)
+    output = probe.execute(
+        ["probe", str(protocol), "4", str(target)],
+        image or selected_image(False),
     )
     line = next(
         (part for part in reversed(output.splitlines()) if part.startswith('{"target":')),
@@ -351,8 +552,14 @@ def topology() -> TopologyResult:
     return topology_for_protocol(state.protocol)
 
 
-def diagnose_project(protocol: Protocol, image: str, project: str) -> DiagnoseResult:
-    nodes = [ping_with_protocol(target, protocol, image, project) for target in (2, 3)]
+def diagnose_project(
+    protocol: Protocol,
+    image: str,
+    project: str,
+    *,
+    owner: ProbeOwner | None = None,
+) -> DiagnoseResult:
+    nodes = [ping_with_protocol(target, protocol, image, project, owner=owner) for target in (2, 3)]
     return DiagnoseResult(
         protocol=protocol,
         libcspVersion="2.1",

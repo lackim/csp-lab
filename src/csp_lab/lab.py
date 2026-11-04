@@ -18,6 +18,7 @@ class Lab:
     image: str
     _active: bool
     _closed: bool
+    _probes: docker.ProbeOwner
 
     def __init__(self, protocol: Protocol = 2, build: bool = False) -> None:
         if type(protocol) is not int or protocol not in (1, 2):
@@ -30,6 +31,7 @@ class Lab:
         self.image = docker.project_image(self.project, build)
         self._active = False
         self._closed = False
+        self._probes = docker.ProbeOwner(self.project)
 
     def __enter__(self) -> "Lab":
         if self._active or self._closed:
@@ -74,13 +76,16 @@ class Lab:
     def _require_active(self) -> None:
         if not self._active:
             raise RuntimeError("Lab is not started. Enter its context first.")
+        self._probes.require_usable()
 
     def ping(self, address: int) -> PingResult:
         self._require_active()
         if type(address) is not int:
             raise ValueError("Address must be an integer.")
         docker.parse_address(str(address), self.protocol)
-        return docker.ping_with_protocol(address, self.protocol, self.image, self.project)
+        return docker.ping_with_protocol(
+            address, self.protocol, self.image, self.project, owner=self._probes
+        )
 
     def topology(self) -> TopologyResult:
         self._require_active()
@@ -88,4 +93,4 @@ class Lab:
 
     def diagnose(self) -> DiagnoseResult:
         self._require_active()
-        return docker.diagnose_project(self.protocol, self.image, self.project)
+        return docker.diagnose_project(self.protocol, self.image, self.project, owner=self._probes)
