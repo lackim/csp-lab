@@ -84,3 +84,4 @@ uv run --locked python tests/probe_recovery.py
 uv run --locked python tests/custom_node_lifecycle.py
 uv run --locked python tests/custom_node_requests.py
 uv run --locked python tests/custom_node_artifacts.py
+uv run --locked python tests/custom_node_pytest.py

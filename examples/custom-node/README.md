@@ -25,7 +25,54 @@ for protocol in (1, 2):
 PY
 ```
 
-Pytest application examples follow in the next slice.
+Run the same pytest tests for CSP v1 and v2 (Docker must be available):
+
+```sh
+uv run --locked pytest -q examples/custom-node/tests
+```
+
+The tests use `uppercase-node:dev` and build the managed native image from the
+checkout. `test_uppercase` includes a fresh application identifier and checks the
+complete transformed reply. Other tests cover binary boundaries and a
+function-isolated stop/timeout/restart. The expected timeout is caught, so that
+successful test produces no failure artifacts.
+
+Build an intentionally incorrect image that still answers standard ping, then
+run the **same assertion** against it:
+
+```sh
+docker build -f examples/custom-node/Dockerfile --build-arg INCORRECT=ON \
+  -t uppercase-node:broken .
+CSP_LAB_EXAMPLE_IMAGE=uppercase-node:broken uv run --locked pytest -q \
+  examples/custom-node/tests/test_application.py::test_uppercase
+```
+
+Both protocol cases must fail the application assertion, with no setup errors or
+skips. This variant echoes the input instead of uppercasing it. Its failure
+bundles remain under `artifacts/csp-lab` after the containers are removed.
+`CSP_LAB_EXAMPLE_IMAGE` selects an image; `CSP_LAB_EXAMPLE_BUILD=0` selects the
+published native image matching the installed package instead of a local build.
+Custom-node support requires csp-lab 0.3.0 or newer; while developing this release,
+use the checkout and the default local build.
+
+You can also configure a test directly:
+
+```python
+import pytest
+from csp_lab import Node
+
+@pytest.mark.csp_lab(nodes=(Node(5, "uppercase-node:dev"),))
+def test_my_application(csp_lab):
+    assert csp_lab.request(5, port=10, payload=b"hello") == b"HELLO"
+```
+
+Session sharing uses protocol, native-build setting, and the normalized nodes
+configuration (addresses and image references). Order does not matter; changing
+an image reference or address creates a different lab. Identical configurations
+retain their first-created image IDs. Rebuilt tags require a new lab/session.
+For tests that stop nodes, use `scope="function"`. The nearest module/class/test
+marker supplies the whole configuration; marker values are not merged, and all
+marker levels are strictly validated.
 
 `lab.request(address, *, port, payload, timeout_ms=1500)` sends one packet and
 returns one raw `bytes` reply, including an empty reply. The address must name a

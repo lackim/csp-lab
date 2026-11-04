@@ -83,10 +83,12 @@ int main(void) {
                 csp_service_handler(packet);
                 continue;
             }
+#ifndef CSP_LAB_EXAMPLE_INCORRECT
             for (size_t i = 0; i < packet->length; ++i) {
                 if (packet->data[i] >= 'a' && packet->data[i] <= 'z')
                     packet->data[i] -= 'a' - 'A';
             }
+#endif
             csp_send(conn, packet);
         }
         csp_close(conn);
