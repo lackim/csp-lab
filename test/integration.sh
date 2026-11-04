@@ -79,3 +79,5 @@ uv run --locked csp-lab cleanup "$recovery_project"
 [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$recovery_project")" ]
 ! docker image inspect "csp-lab-native:$recovery_project" >/dev/null 2>&1
 : > "$recovery_file"
+
+uv run --locked python tests/probe_recovery.py

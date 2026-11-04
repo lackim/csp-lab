@@ -19,7 +19,7 @@ def test_two_labs_are_isolated_and_return_existing_models(monkeypatch: pytest.Mo
     def start(protocol: int, image: str, project: str, build: bool) -> None:
         started.append((protocol, image, project, build))
 
-    def probe(target: int, protocol: int, image: str, project: str) -> PingResult:
+    def probe(target: int, protocol: int, image: str, project: str, **kwargs: object) -> PingResult:
         probes.append((target, protocol, project))
         return PingResult(target=target, reachable=True, rttMs=2)
 
@@ -138,7 +138,7 @@ def test_owned_cleanup_removes_only_its_project_and_image(monkeypatch: pytest.Mo
     image = f"csp-lab-native:{project}"
     calls: list[tuple[str, object]] = []
 
-    def compose(args: list[str], protocol: int, **kwargs: object) -> str:
+    def compose(args: list[str], protocol: int, *remaining: object, **kwargs: object) -> str:
         calls.append(("compose", kwargs["project"]))
         raise RuntimeError("down failed")
 
@@ -152,7 +152,7 @@ def test_owned_cleanup_removes_only_its_project_and_image(monkeypatch: pytest.Mo
     monkeypatch.setattr(docker, "run", run)
     with pytest.raises(RuntimeError, match="down failed"):
         docker.cleanup_owned_project(project)
-    assert calls[0] == ("compose", project)
+    assert ("compose", project) in calls
     assert ("docker", ["image", "rm", image]) in calls
 
     result = CliRunner().invoke(app, ["cleanup", "csp-lab", "--json"])

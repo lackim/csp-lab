@@ -25,7 +25,21 @@ def put_state(root: Path, protocol: int = 2, build: bool = False, image: str | N
 
 def fake_docker(root: Path, script: str) -> None:
     path = root / "bin" / "docker"
-    path.write_text("#!/bin/sh\n" + script, encoding="utf-8")
+    control = '''
+case "$1 $2" in
+  'network ls') printf '%s\\n' network-id; exit 0;;
+  'container ls') exit 0;;
+  'container create')
+    for arg do target=$arg; done
+    printf '%s\\n' "$target" > "${0%/*}/probe-target"
+    printf '%064d\\n' 1
+    exit 0;;
+  'container start')
+    read -r target < "${0%/*}/probe-target"
+    set -- "$target";;
+esac
+'''
+    path.write_text("#!/bin/sh\n" + control + script, encoding="utf-8")
     path.chmod(0o755)
 
 

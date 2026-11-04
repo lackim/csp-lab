@@ -76,6 +76,13 @@ def test_node_responds(csp_lab):
 
 Tests using `csp_lab` share a lab for the pytest session by default. Use `@pytest.mark.csp_lab(scope="function")` for a fresh lab per test; protocol 1 and 2 use separate projects. The fixture skips when Docker or Compose is unavailable. An interrupted process can leave containers behind: list their project names with `docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u`, then run `csp-lab cleanup <csp-lab-py-project>` for the affected project.
 
+Each probe is created stopped on the lab's private network and started only after
+Docker acknowledges its ID. The caller confirms removal before returning its
+result, including after a timeout or interruption. If cleanup cannot be confirmed,
+that `Lab` rejects further operations; exit its context and use the reported
+cleanup command to recover. A killed worker's probe containers are also covered
+by project cleanup.
+
 ## Local development
 
 From a clone of this repository:

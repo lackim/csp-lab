@@ -127,6 +127,7 @@ def rmtree(*args, **kwargs):
 
 docker.start_project = start
 docker.compose = lambda *args, **kwargs: ''
+docker.cleanup_project_probes = lambda project: None
 docker.shutil.rmtree = rmtree
 if phase == 'stop':
     docker.down()
