@@ -9,6 +9,12 @@ terms remain in the image.
 | ZeroMQ (`libzmq5`, Debian bookworm package) | [Debian package](https://packages.debian.org/bookworm/libzmq5) | LGPL-3.0+ with a special exception and package-specific terms; `/usr/share/doc/libzmq5/copyright` |
 | Debian base image and runtime packages | [Debian](https://www.debian.org/) | Individual package notices under `/usr/share/doc/` |
 
+The libcsp build includes local frame-length guards for the ZMQ interface and hub
+diagnostic receiver. The pinned source submodule is unchanged; the build applies
+the documented patch and companion header in `patches/libcsp` and
+`native/zmq_frame.h`. These are also shipped under
+`/usr/share/licenses/libcsp/patches/` in the image.
+
 The csp-lab source and its own MIT license are at
 `/usr/share/licenses/csp-lab/LICENSE` in the image. The installed package versions
 can be inspected with `dpkg-query -W` inside a container.

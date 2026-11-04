@@ -99,6 +99,11 @@ uv run --locked csp-lab down
 bash test/integration.sh
 ```
 
+`bash test/native-bounds.sh` builds a separate AddressSanitizer image, verifies
+frame boundaries directly, and injects malformed ZMQ frames into a live hub and
+node for both protocol versions. The build applies the documented
+[local libcsp guards](patches/libcsp/README.md) without modifying the pinned submodule.
+
 The GitHub Actions workflow is configured to run both checks on Ubuntu with Docker Compose. The integration script uses its own temporary `XDG_STATE_HOME` and unique `CSP_LAB_PROJECT`, and cleans only those resources on exit, including after a failure. It does not adopt checkout-based legacy labs. If cleanup fails, it reports the project and retains the temporary state for recovery.
 
 ## Scope and license

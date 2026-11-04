@@ -1,0 +1,107 @@
+--- a/src/interfaces/csp_if_zmqhub.c
++++ b/src/interfaces/csp_if_zmqhub.c
+@@ -11,6 +11,7 @@
+ #include <pthread.h>
+ 
+ #include <csp/csp_id.h>
++#include <csp/interfaces/csp_lab_zmq_frame.h>
+ 
+ #include "../csp_macro.h"
+ 
+@@ -114,16 +115,12 @@
+ 
+ 		// Receive data
+ 		if (zmq_msg_recv(&msg, drv->subscriber, 0) < 0) {
++			zmq_msg_close(&msg);
+ 			csp_print("ZMQ RX err %s: %s\n", drv->iface.name, zmq_strerror(zmq_errno()));
+ 			continue;
+ 		}
+ 
+ 		size_t datalen = zmq_msg_size(&msg);
+-		if (datalen < HEADER_SIZE) {
+-			csp_print("ZMQ RX %s: Too short datalen: %u - expected min %u bytes\n", drv->iface.name, datalen, HEADER_SIZE);
+-			zmq_msg_close(&msg);
+-			continue;
+-		}
+ 
+ 		// Create new csp packet
+ 		packet = csp_buffer_get(0);
+@@ -133,20 +130,11 @@
+ 			continue;
+ 		}
+ 
+-		// Copy the data from zmq to csp
+-		uint8_t * rx_data = zmq_msg_data(&msg);
+-		rx_data = csp_zmqhub_fixup_cspv1_del_dest_addr(rx_data, &datalen);
+-
+-		csp_id_setup_rx(packet);
+-
+-		memcpy(packet->frame_begin, rx_data, datalen);
+-		packet->frame_length = datalen;
+-
+-		/* Parse the frame and strip the ID field */
+-		if (csp_id_strip_fixup_cspv1(packet) != 0) {
++		/* Validate wire size before copying into the fixed packet buffer. */
++		if (csp_lab_zmq_frame_copy(packet, zmq_msg_data(&msg), datalen) != 0) {
+ 			drv->iface.rx_error++;
+ 			csp_buffer_free(packet);
+-		    zmq_msg_close(&msg);
++			zmq_msg_close(&msg);
+ 			continue;
+ 		}
+ 
+--- a/examples/zmqproxy.c
++++ b/examples/zmqproxy.c
+@@ -6,6 +6,7 @@
+ 
+ #include <csp/csp.h>
+ #include <csp/csp_id.h>
++#include <csp/interfaces/csp_lab_zmq_frame.h>
+ #include <csp/interfaces/csp_if_zmqhub.h>
+ 
+ int debug = 0;
+@@ -35,7 +36,7 @@
+ 
+ 
+ 	/* Allocated 'raw' CSP packet */
+-	csp_packet_t * packet = malloc(1024);
++	csp_packet_t * packet = malloc(sizeof(*packet));
+ 	assert(packet != NULL);
+ 
+ 	if (logfile_name) {
+@@ -48,7 +49,7 @@
+ 
+ 	while (1) {
+ 		zmq_msg_t msg;
+-		zmq_msg_init_size(&msg, 1024);
++		zmq_msg_init(&msg);
+ 
+ 		/* Receive data */
+ 		if (zmq_msg_recv(&msg, subscriber, 0) < 0) {
+@@ -58,22 +59,12 @@
+ 		}
+ 
+ 		size_t datalen = zmq_msg_size(&msg);
+-		if (datalen < 5) {
+-			csp_print("ZMQ: Too short datalen: %u\n", datalen);
+-			while (zmq_msg_recv(&msg, subscriber, ZMQ_NOBLOCK) > 0)
+-				zmq_msg_close(&msg);
++		/* Capture must obey the same bounds as node receivers. */
++		if (csp_lab_zmq_frame_copy(packet, zmq_msg_data(&msg), datalen) != 0) {
++			csp_print("ZMQ: Invalid frame length: %zu\n", datalen);
++			zmq_msg_close(&msg);
+ 			continue;
+ 		}
+-
+-		uint8_t * rx_data = csp_zmqhub_fixup_cspv1_del_dest_addr(zmq_msg_data(&msg), &datalen);
+-
+-		/* Copy to packet */
+-		csp_id_setup_rx(packet);
+-		memcpy(packet->frame_begin, rx_data, datalen);
+-		packet->frame_length = datalen;
+-
+-		/* Parse header */
+-		csp_id_strip_fixup_cspv1(packet);
+ 
+ 		/* Print header data */
+ 		csp_print("Packet: Src %u, Dst %u, Dport %u, Sport %u, Pri %u, Flags 0x%02X, Size %" PRIu16 "\n",
