@@ -6,11 +6,14 @@ import os
 import re
 import shutil
 import subprocess
-from contextlib import ExitStack
+import tempfile
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from importlib.metadata import version
 from importlib.resources import as_file, files
 from pathlib import Path
 
+from filelock import FileLock, Timeout
 from pydantic import ValidationError
 
 from csp_lab.models import (
@@ -26,13 +29,66 @@ ROOT = Path(__file__).resolve().parents[2]
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
 STATE_DIR = STATE_HOME / "csp-lab"
 STATE_FILE = STATE_DIR / "state.json"
-PROJECT = "csp-lab"
+PROJECT = os.environ.get("CSP_LAB_PROJECT", "csp-lab")
 IMAGE = "ghcr.io/lackim/csp-lab"
 OWNED_PROJECT = re.compile(r"csp-lab-py-[0-9a-f]{16}\Z")
 
 
+class _InvalidState(ValueError):
+    def __init__(self, path: Path) -> None:
+        super().__init__("Unsupported lab state. Run 'csp-lab down' and start again.")
+        self.path = path
+
+
+@contextmanager
+def _state_lock() -> Iterator[None]:
+    # Keep the lock outside STATE_DIR: down/rollback may remove that directory.
+    lock_path = STATE_DIR.with_name(STATE_DIR.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(lock_path, timeout=0)
+    try:
+        lock.acquire()
+    except Timeout as exc:
+        raise RuntimeError(
+            "Another csp-lab start/stop operation is in progress. Try again when it finishes."
+        ) from exc
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _write_state(state: LabState) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=STATE_DIR, prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(
+                {
+                    **state.as_json(),
+                    "build": state.build,
+                    "image": state.image,
+                    "project": state.project,
+                },
+                stream,
+                indent=2,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, STATE_FILE)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _legacy_project(root: Path) -> str:
+    return "csp-lab-" + hashlib.sha256(str(root).encode()).hexdigest()[:8]
+
+
 def selected_image(build: bool) -> str:
-    return "csp-lab-native:local" if build else f"{IMAGE}:v{version('csp-lab')}"
+    if not build:
+        return f"{IMAGE}:v{version('csp-lab')}"
+    return "csp-lab-native:local" if PROJECT == "csp-lab" else f"csp-lab-native:{PROJECT}"
 
 
 def project_image(project: str, build: bool) -> str:
@@ -70,25 +126,28 @@ def _read_state(path: Path) -> LabState | None:
         content = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+    except UnicodeError as exc:
+        raise _InvalidState(path) from exc
     try:
         return LabState.model_validate_json(content)
     except ValidationError as exc:
-        raise ValueError("Unsupported lab state. Run 'csp-lab down' and start again.") from exc
+        raise _InvalidState(path) from exc
 
 
 def get_state() -> LabState | None:
     state = _read_state(STATE_FILE)
     if state is not None:
         return state
+    if PROJECT != "csp-lab":
+        return None
     for root in dict.fromkeys((ROOT, Path.cwd().resolve())):
         legacy = _read_state(root / ".csp-lab" / "state.json")
         if legacy is not None:
-            project = "csp-lab-" + hashlib.sha256(str(root).encode()).hexdigest()[:8]
             return legacy.model_copy(
                 update={
                     "build": True,
                     "image": "csp-lab-native:local",
-                    "project": project,
+                    "project": _legacy_project(root),
                     "legacy_root": root,
                 }
             )
@@ -130,6 +189,8 @@ def compose(
     build_overlay: bool = False,
     project: str = PROJECT,
 ) -> str:
+    if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project) is None:
+        raise ValueError("Compose project must contain lowercase letters, digits, '_' or '-'.")
     env = {"CSP_VERSION": str(protocol), "CSP_LAB_IMAGE": image or selected_image(False)}
     with ExitStack() as stack:
         compose_file = stack.enter_context(as_file(files("csp_lab") / "data" / "compose.yaml"))
@@ -165,47 +226,50 @@ def start_project(protocol: Protocol, image: str, project: str, build: bool = Fa
 
 
 def up(protocol: Protocol, build: bool = False) -> LabState:
-    if get_state() is not None:
-        raise RuntimeError("Lab is already started. Run 'csp-lab down' before changing protocol.")
-    image = selected_image(build)
-    try:
-        start_project(protocol, image, PROJECT, build)
-        state = LabState(
-            protocol=protocol,
-            libcspVersion="2.1",
-            build=build,
-            image=image,
-            project=PROJECT,
-        )
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(
-            json.dumps(
-                {**state.as_json(), "build": build, "image": image, "project": PROJECT},
-                indent=2,
+    with _state_lock():
+        if get_state() is not None:
+            raise RuntimeError(
+                "Lab is already started. Run 'csp-lab down' before changing protocol."
             )
-            + "\n",
-            encoding="utf-8",
-        )
-        return state
-    except Exception:
+        image = selected_image(build)
         try:
-            compose(["down", "--remove-orphans"], protocol, image)
-        except Exception:
-            pass
-        shutil.rmtree(STATE_DIR, ignore_errors=True)
-        raise
+            start_project(protocol, image, PROJECT, build)
+            state = LabState(
+                protocol=protocol,
+                libcspVersion="2.1",
+                build=build,
+                image=image,
+                project=PROJECT,
+            )
+            _write_state(state)
+            return state
+        except BaseException:
+            try:
+                compose(["down", "--remove-orphans"], protocol, image, project=PROJECT)
+            except Exception:
+                pass
+            shutil.rmtree(STATE_DIR, ignore_errors=True)
+            raise
 
 
 def down() -> None:
-    state = get_state()
-    compose(
-        ["down", "--remove-orphans"],
-        state.protocol if state else 2,
-        state_image(state) if state else None,
-        project=state_project(state) if state else PROJECT,
-    )
-    state_dir = state.legacy_root / ".csp-lab" if state and state.legacy_root else STATE_DIR
-    shutil.rmtree(state_dir, ignore_errors=True)
+    with _state_lock():
+        try:
+            state = get_state()
+        except _InvalidState as exc:
+            state = None
+            state_dir = exc.path.parent
+            project = PROJECT if exc.path == STATE_FILE else _legacy_project(state_dir.parent)
+        else:
+            state_dir = state.legacy_root / ".csp-lab" if state and state.legacy_root else STATE_DIR
+            project = state_project(state) if state else PROJECT
+        compose(
+            ["down", "--remove-orphans"],
+            state.protocol if state else 2,
+            state_image(state) if state else None,
+            project=project,
+        )
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 def cleanup_owned_project(project: str) -> None:

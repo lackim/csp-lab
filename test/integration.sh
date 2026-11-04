@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-recovery_file=$(mktemp)
+integration_dir=$(mktemp -d)
+export XDG_STATE_HOME="$integration_dir/state"
+export CSP_LAB_PROJECT="csp-lab-py-$(printf '%08x%08x' "$$" "$RANDOM")"
+recovery_file="$integration_dir/recovery-project"
 
 cleanup() {
+  integration_status=$?
+  trap - EXIT
+  cleanup_failed=0
   if [ -s "$recovery_file" ]; then
-    uv run --locked csp-lab cleanup "$(cat "$recovery_file")" >/dev/null 2>&1 || true
+    uv run --locked csp-lab cleanup "$(cat "$recovery_file")" || cleanup_failed=1
   fi
-  rm -f "$recovery_file"
-  uv run --locked csp-lab down >/dev/null 2>&1 || true
+  uv run --locked csp-lab down || cleanup_failed=1
+  uv run --locked csp-lab cleanup "$CSP_LAB_PROJECT" || cleanup_failed=1
+  if [ "$cleanup_failed" = 0 ]; then
+    rm -rf "$integration_dir"
+  else
+    printf 'Cleanup incomplete for %s; state retained in %s\n' \
+      "$CSP_LAB_PROJECT" "$XDG_STATE_HOME" >&2
+    if [ "$integration_status" = 0 ]; then
+      integration_status=1
+    fi
+  fi
+  exit "$integration_status"
 }
 trap cleanup EXIT
 
@@ -42,7 +58,9 @@ for protocol in (1, 2):
     ).returncode != 0
 PY
 uv run --locked csp-lab status --json
+printf '{"protocol":' > "$XDG_STATE_HOME/csp-lab/state.json"
 uv run --locked csp-lab down
+[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$CSP_LAB_PROJECT")" ]
 
 RECOVERY_FILE="$recovery_file" uv run --locked python - <<'PY'
 import os
