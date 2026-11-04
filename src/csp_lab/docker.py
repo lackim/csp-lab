@@ -28,6 +28,7 @@ from csp_lab.models import (
     TopologyResult,
 )
 from csp_lab.nodes import Node
+from csp_lab.requests import RequestTimeout
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
@@ -166,7 +167,12 @@ def require_state() -> LabState:
 
 
 def run(
-    command: str, args: list[str], env: dict[str, str] | None = None, timeout: float = 120
+    command: str,
+    args: list[str],
+    env: dict[str, str] | None = None,
+    timeout: float = 120,
+    *,
+    input_text: str | None = None,
 ) -> str:
     try:
         result = subprocess.run(
@@ -174,13 +180,14 @@ def run(
             env={**os.environ, **(env or {})},
             capture_output=True,
             text=True,
+            input=input_text,
             timeout=timeout,
             check=False,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(f"{command} ENOENT: {exc}") from exc
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
+        detail = (result.stderr or (result.stdout if input_text is None else "")).strip()
         raise RuntimeError(f"{command} exited {result.returncode}: {detail}")
     return result.stdout
 
@@ -326,7 +333,9 @@ class ProbeOwner:
             else:
                 raise RuntimeError(self._failure) from (primary or exc)
 
-    def execute(self, command: list[str], image: str, timeout: float = 30) -> str:
+    def execute(
+        self, command: list[str], image: str, timeout: float = 30, *, input_text: str | None = None
+    ) -> str:
         self.require_usable()
         deadline = time.monotonic() + timeout
         try:
@@ -377,10 +386,15 @@ class ProbeOwner:
             if re.fullmatch(r"[0-9a-f]{64}", container) is None:
                 raise RuntimeError("Docker returned an invalid probe container ID.")
             confirmed = container
+            attach = ["container", "start", "--attach", "--interactive", container]
+            remaining = max(0.001, deadline - time.monotonic())
+            if input_text is None:
+                return run("docker", attach, timeout=remaining)
             return run(
                 "docker",
-                ["container", "start", "--attach", "--interactive", container],
-                timeout=max(0.001, deadline - time.monotonic()),
+                attach,
+                timeout=remaining,
+                input_text=input_text,
             )
         except subprocess.TimeoutExpired as exc:
             primary = RuntimeError(
@@ -650,6 +664,45 @@ def ping_with_protocol(
 def ping(target: int) -> PingResult:
     state = require_state()
     return ping_with_protocol(target, state.protocol, state_image(state), state_project(state))
+
+
+def request_with_protocol(
+    target: int,
+    port: int,
+    payload: bytes,
+    timeout_ms: int,
+    protocol: Protocol,
+    image: str,
+    owner: ProbeOwner,
+) -> bytes:
+    output = owner.execute(
+        ["request", str(protocol), "4", str(target), str(port), str(timeout_ms)],
+        image,
+        timeout=30 + timeout_ms / 1000,
+        input_text=payload.hex() + "\n",
+    )
+    # Native libraries can log before the result. Never include probe output in
+    # errors: it can contain application bytes from the reply.
+    lines = [line for line in output.splitlines() if line.startswith('{"status":')]
+    if len(lines) != 1:
+        raise RuntimeError("Request probe returned no unique JSON result.")
+    try:
+        result = json.loads(lines[0])
+    except (ValueError, RecursionError) as exc:
+        raise RuntimeError("Request probe returned invalid JSON.") from exc
+    if result == {"status": "timeout"}:
+        raise RequestTimeout(target, port, timeout_ms)
+    if isinstance(result, dict) and set(result) == {"status", "reply"}:
+        reply = result["reply"]
+        if (
+            result["status"] == "ok"
+            and type(reply) is str
+            and len(reply) <= 512
+            and len(reply) % 2 == 0
+            and re.fullmatch(r"[0-9a-fA-F]*", reply) is not None
+        ):
+            return bytes.fromhex(reply)
+    raise RuntimeError("Request probe returned an invalid result.")
 
 
 def topology_for_protocol(protocol: Protocol, addresses: tuple[int, ...] = ()) -> TopologyResult:

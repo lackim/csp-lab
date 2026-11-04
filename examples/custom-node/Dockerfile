@@ -9,7 +9,9 @@ COPY native ./native
 COPY patches ./patches
 COPY vendor/libcsp ./vendor/libcsp
 COPY examples/custom-node ./examples/custom-node
-RUN cmake -G Ninja -S examples/custom-node -B build -DCMAKE_BUILD_TYPE=Release && \
+ARG TESTING=OFF
+RUN cmake -G Ninja -S examples/custom-node -B build -DCMAKE_BUILD_TYPE=Release \
+    -DCSP_LAB_EXAMPLE_TESTING=${TESTING} && \
     cmake --build build --target uppercase-node
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251

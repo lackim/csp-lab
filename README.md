@@ -21,6 +21,8 @@ The lab gives you a repeatable place to try CSP v1 and v2, check whether simulat
 The Python `Lab` API also accepts up to eight user-owned application images via
 `Node(address=5, image="my-service:dev")`. See the [independent C application](examples/custom-node/README.md)
 for the container contract, image preparation, readiness, and stop/start example.
+`lab.request(5, port=10, payload=b"hello")` returns raw application reply bytes;
+the example checks the service's result, binary boundaries, and timeout behavior.
 Custom nodes currently belong to the Python API; CLI and MCP use the demo nodes.
 
 ## Requirements
