@@ -2,11 +2,15 @@
 
 import secrets
 import sys
+import tempfile
+from collections.abc import Sequence
+from pathlib import Path
 from types import TracebackType
 from typing import Literal
 
 from csp_lab import docker
 from csp_lab.models import DiagnoseResult, PingResult, Protocol, TopologyResult
+from csp_lab.nodes import Node, normalize_nodes
 
 
 class Lab:
@@ -20,30 +24,64 @@ class Lab:
     _closed: bool
     _probes: docker.ProbeOwner
 
-    def __init__(self, protocol: Protocol = 2, build: bool = False) -> None:
+    def __init__(
+        self, protocol: Protocol = 2, build: bool = False, *, nodes: Sequence[Node] = ()
+    ) -> None:
         if type(protocol) is not int or protocol not in (1, 2):
             raise ValueError("Protocol must be 1 or 2.")
         if type(build) is not bool:
             raise ValueError("Build must be a boolean.")
         self.protocol = protocol
         self.build = build
+        self._nodes: tuple[Node, ...] = normalize_nodes(nodes, protocol)
         self.project = f"csp-lab-py-{secrets.token_hex(8)}"
         self.image = docker.project_image(self.project, build)
         self._active = False
         self._closed = False
         self._probes = docker.ProbeOwner(self.project)
+        self._images: dict[int, str] = {}
+        self._configuration: tempfile.TemporaryDirectory[str] | None = None
+        self._compose_file: Path | None = None
+
+    @property
+    def nodes(self) -> tuple[Node, ...]:
+        return self._nodes
+
+    @property
+    def _addresses(self) -> tuple[int, ...]:
+        return tuple(node.address for node in self.nodes)
 
     def __enter__(self) -> "Lab":
         if self._active or self._closed:
             raise RuntimeError("This Lab context cannot be entered again; create a new Lab.")
         try:
-            docker.start_project(self.protocol, self.image, self.project, self.build)
+            if self.nodes:
+                self._images = docker.resolve_node_images(self.nodes)
+                self._configuration = tempfile.TemporaryDirectory(prefix=f"{self.project}-")
+                self._compose_file = Path(self._configuration.name) / "nodes.json"
+                docker.write_node_overlay(self._compose_file, self.protocol, self._images)
+                try:
+                    docker.start_custom_project(
+                        self.protocol,
+                        self.image,
+                        self.project,
+                        self.build,
+                        self._compose_file,
+                        self._addresses,
+                        self._probes,
+                    )
+                except Exception as exc:
+                    images = ", ".join(f"{node.address}={node.image!r}" for node in self.nodes)
+                    raise RuntimeError(f"Custom-node startup failed ({images}): {exc}") from exc
+            else:
+                docker.start_project(self.protocol, self.image, self.project, self.build)
         except BaseException:
             self._closed = True
             try:
                 docker.cleanup_owned_project(self.project)
             except Exception as cleanup_error:
                 self._report_cleanup_error(cleanup_error)
+            self._discard_configuration()
             raise
         self._active = True
         return self
@@ -65,7 +103,18 @@ class Lab:
                 self._report_cleanup_error(cleanup_error)
             else:
                 raise
+        finally:
+            self._discard_configuration()
         return False
+
+    def _discard_configuration(self) -> None:
+        if self._configuration is not None:
+            try:
+                self._configuration.cleanup()
+            except Exception as exc:
+                self._report_cleanup_error(exc)
+            self._configuration = None
+            self._compose_file = None
 
     def _report_cleanup_error(self, error: Exception) -> None:
         try:
@@ -89,8 +138,33 @@ class Lab:
 
     def topology(self) -> TopologyResult:
         self._require_active()
-        return docker.topology_for_protocol(self.protocol)
+        return docker.topology_for_protocol(self.protocol, self._addresses)
 
     def diagnose(self) -> DiagnoseResult:
         self._require_active()
-        return docker.diagnose_project(self.protocol, self.image, self.project, owner=self._probes)
+        return docker.diagnose_project(
+            self.protocol, self.image, self.project, owner=self._probes, images=self._images
+        )
+
+    def _custom_address(self, address: int) -> None:
+        if type(address) is not int or address not in self._addresses:
+            raise ValueError("Address must identify a configured custom node.")
+
+    def stop_node(self, address: int) -> None:
+        """Stop one custom container without removing it or changing topology."""
+        self._require_active()
+        self._custom_address(address)
+        assert self._compose_file is not None
+        docker.change_node_state(
+            address, False, self.protocol, self.image, self.project, self._compose_file
+        )
+
+    def start_node(self, address: int) -> None:
+        """Start the original container and wait for its CSP ping readiness."""
+        self._require_active()
+        self._custom_address(address)
+        assert self._compose_file is not None
+        docker.change_node_state(
+            address, True, self.protocol, self.image, self.project, self._compose_file
+        )
+        docker.wait_for_nodes((address,), self.protocol, self.image, self.project, self._probes)

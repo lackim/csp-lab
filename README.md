@@ -18,6 +18,11 @@ The published [Python package](https://pypi.org/project/csp-lab/) uses its match
 
 The lab gives you a repeatable place to try CSP v1 and v2, check whether simulated nodes respond, and inspect failures through the CLI or MCP tools. It is useful when developing CSP integrations or experimenting with an MCP client without arranging physical CubeSat hardware.
 
+The Python `Lab` API also accepts up to eight user-owned application images via
+`Node(address=5, image="my-service:dev")`. See the [independent C application](examples/custom-node/README.md)
+for the container contract, image preparation, readiness, and stop/start example.
+Custom nodes currently belong to the Python API; CLI and MCP use the demo nodes.
+
 ## Requirements
 
 - Python 3.10 or newer and uv

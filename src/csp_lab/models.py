@@ -48,3 +48,4 @@ class DiagnoseResult(LabModel):
     libcsp_version: Literal["2.1"] = Field(alias="libcspVersion")
     healthy: bool
     nodes: list[PingResult]
+    image_ids: dict[int, str] = Field(default_factory=dict, alias="imageIds")
