@@ -99,60 +99,55 @@ def collect_bundle(
         truncated |= result.truncated
         return result
 
+    # Container-list summaries contain no environment configuration. In contrast,
+    # `inspect --format` fetches the full object before formatting in the CLI.
+    # Keep probe stdout and all command/environment fields out of the snapshot.
+    template = (
+        '{"id":{{json .ID}},"image":{{json .Image}},'
+        '"project":{{json (.Label "com.docker.compose.project")}},'
+        '"service":{{json (.Label "com.docker.compose.service")}},'
+        '"status":{{json .State}}}'
+    )
     listing = capture(
         "containers",
         [
             "container",
             "ls",
             "--all",
-            "--quiet",
             "--no-trunc",
             "--filter",
             f"label=com.docker.compose.project={project}",
+            "--format",
+            template,
         ],
-        8192,
-    )
-    # Select fields at the daemon: never fetch environments, commands, or full
-    # inspect output. Probe stdout is deliberately excluded from all snapshots.
-    template = (
-        '{"id":{{json .Id}},"imageId":{{json .Image}},'
-        '"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
-        '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
-        '"status":{{json .State.Status}},"exitCode":{{json .State.ExitCode}}}'
+        MANIFEST_RESERVE,
     )
     remaining_bytes = MAX_BYTES - MANIFEST_RESERVE
-    listed_ids = listing.data.splitlines()
-    truncated |= len(listed_ids) > 32
-    for raw_id in listed_ids[:32]:
-        container_id = raw_id.decode("ascii", errors="replace")
-        if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
-            failures.append({"phase": "containers", "error": "invalid-id"})
-            continue
-        inspected = capture(
-            "status", ["container", "inspect", "--format", template, container_id], 4096
-        )
+    rows = listing.data.splitlines()
+    truncated |= len(rows) > 32
+    for row in rows[:32]:
         try:
-            metadata = json.loads(inspected.data)
+            metadata = json.loads(row)
         except (ValueError, UnicodeError):
-            failures.append({"phase": "status", "error": "invalid-json"})
+            failures.append({"phase": "containers", "error": "invalid-json"})
             continue
         if not isinstance(metadata, dict) or (
-            metadata.get("project") != project
-            or type(metadata.get("service")) is not str
-            or metadata.get("id") != container_id
+            metadata.get("project") != project or type(metadata.get("service")) is not str
         ):
             continue
         if metadata["service"] not in allowed:
             continue
+        container_id = metadata.get("id")
         if (
-            set(metadata) != {"id", "imageId", "project", "service", "status", "exitCode"}
-            or type(metadata.get("imageId")) is not str
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", metadata["imageId"]) is None
+            set(metadata) != {"id", "image", "project", "service", "status"}
+            or type(container_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+            or type(metadata.get("image")) is not str
+            or len(metadata["image"]) > 512
             or metadata.get("status")
             not in ("created", "running", "paused", "restarting", "removing", "exited", "dead")
-            or type(metadata.get("exitCode")) is not int
         ):
-            failures.append({"phase": "status", "error": "invalid-metadata"})
+            failures.append({"phase": "containers", "error": "invalid-metadata"})
             continue
         service = str(metadata["service"])
         containers.append(metadata)

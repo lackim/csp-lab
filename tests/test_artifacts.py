@@ -20,18 +20,17 @@ def test_manifest_selects_metadata_and_service_logs_only(tmp_path, monkeypatch):
         assert 0 < deadline - time.monotonic() <= 5
         if args[:2] == ["container", "ls"]:
             assert f"label=com.docker.compose.project={project}" in args
-            return artifacts._Output("\n".join(ids).encode())
-        if args[:2] == ["container", "inspect"]:
-            container = args[-1]
-            metadata = {
-                "id": container,
-                "imageId": "sha256:" + "a" * 64,
-                "project": "foreign" if container == ids[2] else project,
-                "service": "probe" if container == ids[1] else "custom5",
-                "status": "running",
-                "exitCode": 0,
-            }
-            return artifacts._Output(json.dumps(metadata).encode())
+            metadata = [
+                {
+                    "id": container,
+                    "image": "sha256:" + "a" * 64,
+                    "project": "foreign" if container == ids[2] else project,
+                    "service": "probe" if container == ids[1] else "custom5",
+                    "status": "running",
+                }
+                for container in ids
+            ]
+            return artifacts._Output("\n".join(json.dumps(row) for row in metadata).encode())
         assert args == ["container", "logs", "--tail", "200", ids[0]]
         return artifacts._Output(b"verbatim app output including app-data\n")
 
@@ -56,7 +55,8 @@ def test_manifest_selects_metadata_and_service_logs_only(tmp_path, monkeypatch):
     assert "app-data" not in manifest_text
     assert len(list(bundle.glob("*.log"))) == 1
     assert next(bundle.glob("*.log")).read_bytes() == b"verbatim app output including app-data\n"
-    assert all(".Env" not in " ".join(args) for args in calls)
+    assert all(args[:2] in (["container", "ls"], ["container", "logs"]) for args in calls)
+    assert all(".Env" not in " ".join(args) and ".Command" not in " ".join(args) for args in calls)
     assert not manifest["captureErrors"] and not manifest["truncated"]
 
 
@@ -66,17 +66,14 @@ def test_total_file_bytes_are_bounded_even_for_one_huge_line(tmp_path, monkeypat
 
     def capture(args, deadline, limit):
         if args[:2] == ["container", "ls"]:
-            return artifacts._Output(identity.encode())
-        if args[:2] == ["container", "inspect"]:
             return artifacts._Output(
                 json.dumps(
                     {
                         "id": identity,
-                        "imageId": "sha256:" + identity,
+                        "image": "sha256:" + identity,
                         "project": project,
                         "service": "hub",
                         "status": "running",
-                        "exitCode": 0,
                     }
                 ).encode()
             )
