@@ -59,6 +59,20 @@ The optional Docker build argument `TESTING=ON` enables internal integration
 instrumentation (request counts, dropped replies, and malformed frames). Normal
 images expose only the uppercase service and standard CSP services.
 
+On startup failure or an exception leaving `with Lab(...)`, diagnostics are
+saved before cleanup under `artifacts/csp-lab/<project>/<failure>/`. A caught
+expected `RequestTimeout` produces no bundle. `manifest.json` contains addresses,
+resolved image IDs, service status, exception class, and the last operation's
+target/port/timeout, without payloads or exception text. Service logs are verbatim
+and may contain your application's data. Each capture has a five-second budget,
+200 lines per service, and 2 MiB total; a lab creates at most 20 bundles. Capture
+failure is reported without replacing your exception or preventing cleanup.
+Set `artifacts_dir=None` to opt out, or a path to select another directory.
+`lab.collect_artifacts()` also works while a lab is unusable after uncertain
+probe cleanup. Pytest uses `--csp-lab-artifacts DIRECTORY` (`none` disables it).
+The pytest fixture captures actual failed outcomes, including strict XPASS;
+skips and expected xfail outcomes do not consume the bundle quota.
+
 `Node` preserves the image's ENTRYPOINT, CMD, and user. The lab supplies:
 
 | Environment | Meaning |

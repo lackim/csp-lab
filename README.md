@@ -25,6 +25,19 @@ for the container contract, image preparation, readiness, and stop/start example
 the example checks the service's result, binary boundaries, and timeout behavior.
 Custom nodes currently belong to the Python API; CLI and MCP use the demo nodes.
 
+`Lab` saves failure diagnostics under `artifacts/csp-lab` on startup failure or
+an exception leaving its context. Pytest also snapshots failures in shared labs
+before teardown; use `--csp-lab-artifacts DIRECTORY` to choose its directory.
+Fixture snapshots follow pytest's final outcome: skips and expected failures
+create no bundle, while strict XPASS failures do.
+Each bundle keeps a manifest and the last 200 lines per service, with a 2 MiB
+total limit, five-second capture budget, and at most 20 bundles per lab. The
+saved path is printed and remains after container cleanup. The manifest records
+status, image IDs, operation parameters, and the exception class; it excludes
+environments, payloads, probe output, and exception/assertion text. Service logs
+are captured verbatim and can contain application data. Use
+`Lab(artifacts_dir=None)` or pytest `--csp-lab-artifacts none` to disable capture.
+
 ## Requirements
 
 - Python 3.10 or newer and uv

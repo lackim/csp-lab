@@ -82,7 +82,7 @@ def test_start_failure_keeps_primary_error_and_attempts_cleanup(
 
     monkeypatch.setattr(docker, "start_project", fail_start)
     monkeypatch.setattr(docker, "cleanup_owned_project", fail_cleanup)
-    lab = Lab()
+    lab = Lab(artifacts_dir=None)
     with pytest.raises(RuntimeError, match="probe failed"):
         with lab:
             pass
@@ -106,7 +106,7 @@ def test_unresponsive_start_cleans_only_its_project(monkeypatch: pytest.MonkeyPa
         ),
     )
     monkeypatch.setattr(docker, "run", lambda *args, **kwargs: "")
-    lab = Lab()
+    lab = Lab(artifacts_dir=None)
     with pytest.raises(RuntimeError, match="Node 2 did not answer"):
         with lab:
             pass
@@ -122,14 +122,14 @@ def test_body_error_stays_primary_when_cleanup_fails(
         raise RuntimeError(f"Could not fully clean {project}. Run 'csp-lab cleanup {project}'.")
 
     monkeypatch.setattr(docker, "cleanup_owned_project", fail_cleanup)
-    lab = Lab()
+    lab = Lab(artifacts_dir=None)
     with pytest.raises(ValueError, match="test body"):
         with lab:
             raise ValueError("test body")
     assert f"csp-lab cleanup {lab.project}" in capsys.readouterr().err
 
     with pytest.raises(RuntimeError, match="Could not fully clean"):
-        with Lab():
+        with Lab(artifacts_dir=None):
             pass
 
 
