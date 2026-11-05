@@ -117,6 +117,8 @@ failure is reported without replacing your exception or preventing cleanup.
 Set `artifacts_dir=None` to opt out, or a path to select another directory.
 `lab.collect_artifacts()` also works while a lab is unusable after uncertain
 probe cleanup. Pytest uses `--csp-lab-artifacts DIRECTORY` (`none` disables it).
+The pytest fixture captures actual failed outcomes, including strict XPASS;
+skips and expected xfail outcomes do not consume the bundle quota.
 
 `Node` preserves the image's ENTRYPOINT, CMD, and user. The lab supplies:
 
