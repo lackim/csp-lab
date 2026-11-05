@@ -1,6 +1,6 @@
 """Pytest fixture for isolated CSP labs."""
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from typing import cast
 
@@ -13,6 +13,10 @@ from csp_lab.nodes import Node, normalize_nodes
 
 _TEST_ERROR = pytest.StashKey[BaseException]()
 _LAB = pytest.StashKey[Lab]()
+
+
+class _PytestFailure(Exception):
+    """A failed pytest report without an exception, such as strict XPASS."""
 
 
 @dataclass(frozen=True)
@@ -72,16 +76,25 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> None:
-    if call.when in ("setup", "call") and call.excinfo is not None:
-        item.stash[_TEST_ERROR] = call.excinfo.value
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    # Run after pytest has classified xfail/skip/strict-XPASS outcomes.
+    report = yield
+    if call.when in ("setup", "call") and report.failed:
+        error = call.excinfo.value if call.excinfo is not None else _PytestFailure()
+        item.stash[_TEST_ERROR] = error
         lab = item.stash.get(_LAB, None)
         if lab is not None:
-            lab.collect_artifacts(call.excinfo.value)
+            lab.collect_artifacts(error)
             if _options_for(item).scope == "function":
                 # Keep the original error for cleanup semantics while avoiding
                 # a second snapshot from Lab.__exit__ after fixture teardown.
-                lab._captured_context_error = call.excinfo.value
+                lab._captured_context_error = error
+    elif call.when in ("setup", "call") and _TEST_ERROR in item.stash:
+        del item.stash[_TEST_ERROR]
+    return report
 
 
 class _Registry:

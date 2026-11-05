@@ -357,3 +357,93 @@ def test_invalid_custom_node_markers_fail_before_docker_even_with_valid_nearer_m
     result.assert_outcomes(errors=6)
     assert "Docker invoked" not in result.stdout.str()
     result.stdout.fnmatch_lines(["*Invalid csp_lab nodes*"])
+
+
+@pytest.mark.parametrize("scope", ["function", "session"])
+def test_artifacts_follow_final_pytest_outcome_before_fixture_teardown(pytester, scope):
+    pytester.makeconftest(
+        """
+        import json
+        from pathlib import Path
+        import pytest
+        from csp_lab import artifacts, docker
+        events = []
+        docker.run = lambda *args, **kwargs: 'available'
+        docker.start_project = lambda *args: events.append(['start', args[2]])
+        docker.cleanup_owned_project = lambda project: events.append(['cleanup', project])
+
+        def capture(root, project, protocol, addresses, images, operation, error):
+            events.append(['capture', type(error).__name__, project])
+            return root
+
+        artifacts.collect_bundle = capture
+
+        @pytest.fixture
+        def application(csp_lab, request):
+            yield csp_lab
+            events.append(['reset', request.node.name, csp_lab.project])
+
+        def pytest_sessionfinish(session, exitstatus):
+            Path('events.json').write_text(json.dumps(events))
+        """
+    )
+    pytester.makepyfile(
+        f"""
+        import pytest
+        pytestmark = pytest.mark.csp_lab(scope={scope!r})
+
+        def test_skip(application):
+            pytest.skip('expected skip')
+
+        @pytest.mark.xfail(reason='expected failure')
+        def test_expected_failure(application):
+            assert False
+
+        @pytest.mark.xfail(reason='unexpected success', strict=True)
+        def test_strict_xpass(application):
+            pass
+
+        @pytest.mark.xfail(reason='allowed success', strict=False)
+        def test_nonstrict_xpass(application):
+            pass
+        """
+    )
+    result = pytester.runpytest_subprocess("-q", "-W", "error")
+    result.assert_outcomes(failed=1, skipped=1, xfailed=1, xpassed=1)
+    events = json.loads((pytester.path / "events.json").read_text())
+    captures = [event for event in events if event[0] == "capture"]
+    assert len(captures) == 1, events
+    capture = captures[0]
+    assert capture[1] == "_PytestFailure"
+    reset = next(event for event in events if event[:2] == ["reset", "test_strict_xpass"])
+    cleanup = next(event for event in events if event == ["cleanup", capture[2]])
+    assert events.index(capture) < events.index(reset) < events.index(cleanup)
+
+
+def test_strict_xpass_failure_is_not_replaced_by_function_cleanup_error(pytester):
+    pytester.makeconftest(
+        """
+        from pathlib import Path
+        from csp_lab import artifacts, docker
+        docker.run = lambda *args, **kwargs: 'available'
+        docker.start_project = lambda *args: None
+        artifacts.collect_bundle = lambda *args: Path('saved')
+
+        def fail_cleanup(project):
+            raise RuntimeError(f'Cleanup failed; run csp-lab cleanup {project}')
+
+        docker.cleanup_owned_project = fail_cleanup
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.csp_lab(scope='function')
+        @pytest.mark.xfail(reason='unexpected success', strict=True)
+        def test_strict_xpass(csp_lab): pass
+        """
+    )
+    result = pytester.runpytest_subprocess("-q", "-W", "error")
+    result.assert_outcomes(failed=1, errors=0)
+    result.stdout.fnmatch_lines(["*XPASS(strict)*unexpected success*"])
