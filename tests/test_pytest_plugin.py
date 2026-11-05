@@ -258,6 +258,107 @@ def test_failed_tests_capture_before_cleanup_and_shared_lab_survives(pytester):
     assert all("secret" not in p.read_text() for p in manifests)
 
 
+def test_custom_nodes_share_only_normalized_identical_configuration(pytester):
+    pytester.makeconftest(
+        """
+        import json
+        from pathlib import Path
+        from csp_lab import docker
+        projects = {}
+        started = []
+        cleaned = []
+        docker.run = lambda *args, **kwargs: 'available'
+        docker.resolve_node_images = lambda nodes: {
+            node.address: 'sha256:' + 'a' * 64 for node in nodes
+        }
+        docker.start_custom_project = lambda *args: started.append(args[2])
+        docker.cleanup_owned_project = cleaned.append
+
+        def pytest_sessionfinish(session, exitstatus):
+            Path('projects.json').write_text(json.dumps({
+                'cases': projects, 'started': started, 'cleaned': cleaned,
+            }))
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+        import conftest
+        from csp_lab import Node
+        normal = (Node(5, 'a'), Node(6, 'b'))
+        cases = [
+            ('a', {'nodes': normal}),
+            ('b', {'nodes': tuple(reversed(normal))}),
+            ('image', {'nodes': (Node(5, 'different'), Node(6, 'b'))}),
+            ('address', {'nodes': (Node(5, 'a'), Node(7, 'b'))}),
+            ('protocol', {'nodes': normal, 'protocol': 1}),
+            ('build', {'nodes': normal, 'build': True}),
+            ('function-a', {'nodes': normal, 'scope': 'function'}),
+            ('function-b', {'nodes': normal, 'scope': 'function'}),
+        ]
+
+        @pytest.mark.parametrize('case', [pytest.param(name, marks=pytest.mark.csp_lab(**options))
+                                        for name, options in cases])
+        def test_configuration(case, csp_lab):
+            assert tuple(node.address for node in csp_lab.nodes) == (
+                (5, 7) if case == 'address' else (5, 6)
+            )
+            conftest.projects[case] = csp_lab.project
+        """
+    )
+    result = pytester.runpytest_subprocess("-q")
+    result.assert_outcomes(passed=8)
+    report = json.loads((pytester.path / "projects.json").read_text())
+    projects = report["cases"]
+    assert projects["a"] == projects["b"]
+    assert len(set(projects.values())) == 7
+    assert sorted(report["started"]) == sorted(report["cleaned"]) == sorted(set(projects.values()))
+
+
+def test_invalid_custom_node_markers_fail_before_docker_even_with_valid_nearer_marker(pytester):
+    pytester.makeconftest(
+        """
+        from csp_lab import docker
+        def fail(*args, **kwargs):
+            raise AssertionError('Docker invoked before node validation')
+        docker.run = fail
+        """
+    )
+    pytester.makepyfile(
+        test_invalid="""
+        import pytest
+        from csp_lab import Node
+
+        @pytest.mark.csp_lab(nodes=None)
+        def test_none(csp_lab): pass
+
+        @pytest.mark.csp_lab(nodes=[5])
+        def test_non_node(csp_lab): pass
+
+        @pytest.mark.csp_lab(nodes=(Node(5, 'a'), Node(5, 'b')))
+        def test_duplicate(csp_lab): pass
+
+        @pytest.mark.csp_lab(protocol=1, nodes=(Node(31, 'a'),))
+        def test_broadcast(csp_lab): pass
+
+        @pytest.mark.csp_lab(nodes=tuple(Node(i, 'a') for i in range(5, 14)))
+        def test_too_many(csp_lab): pass
+        """,
+        test_outer_marker="""
+        import pytest
+        from csp_lab import Node
+        pytestmark = pytest.mark.csp_lab(protocol=1, nodes=(Node(31, 'outer'),))
+
+        @pytest.mark.csp_lab(protocol=2, nodes=(Node(5, 'valid'),))
+        def test_all_levels_are_validated(csp_lab): pass
+        """,
+    )
+    result = pytester.runpytest_subprocess("-q")
+    result.assert_outcomes(errors=6)
+    assert "Docker invoked" not in result.stdout.str()
+    result.stdout.fnmatch_lines(["*Invalid csp_lab nodes*"])
+
+
 @pytest.mark.parametrize("scope", ["function", "session"])
 def test_artifacts_follow_final_pytest_outcome_before_fixture_teardown(pytester, scope):
     pytester.makeconftest(

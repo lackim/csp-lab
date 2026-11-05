@@ -1,6 +1,6 @@
 # csp-lab
 
-A local CubeSat Space Protocol lab powered by [libcsp](https://github.com/libcsp/libcsp). It runs two simulated nodes and a ZMQ hub in Docker. The Python CLI and MCP server provide the same diagnostic operations.
+A local CubeSat Space Protocol test environment powered by [libcsp](https://github.com/libcsp/libcsp). Run your application image beside two demo nodes and a ZMQ hub in Docker, then check real request/reply behavior with Python and pytest. The CLI and MCP server provide lab diagnostics.
 
 ## Quick start
 
@@ -19,7 +19,7 @@ The published [Python package](https://pypi.org/project/csp-lab/) uses its match
 The lab gives you a repeatable place to try CSP v1 and v2, check whether simulated nodes respond, and inspect failures through the CLI or MCP tools. It is useful when developing CSP integrations or experimenting with an MCP client without arranging physical CubeSat hardware.
 
 The Python `Lab` API also accepts up to eight user-owned application images via
-`Node(address=5, image="my-service:dev")`. See the [independent C application](examples/custom-node/README.md)
+`Node(address=5, image="my-service:dev")`. See the [independent C application](https://github.com/lackim/csp-lab/blob/main/examples/custom-node/README.md)
 for the container contract, image preparation, readiness, and stop/start example.
 `lab.request(5, port=10, payload=b"hello")` returns raw application reply bytes;
 the example checks the service's result, binary boundaries, and timeout behavior.
@@ -43,7 +43,7 @@ are captured verbatim and can contain application data. Use
 - Python 3.10 or newer and uv
 - Docker with Compose
 
-The native code is built against the pinned `libcsp` v2.1 submodule. That library supports CSP protocol v1 and v2 at runtime. The Docker image uses Linux because recent libcsp releases do not provide maintained native macOS support. See [versioning policy](docs/versioning.md) for the supported combinations.
+The native code is built against the pinned `libcsp` v2.1 submodule. That library supports CSP protocol v1 and v2 at runtime. The Docker image uses Linux because recent libcsp releases do not provide maintained native macOS support. See [versioning policy](https://github.com/lackim/csp-lab/blob/main/docs/versioning.md) for the supported combinations.
 
 Lab state is stored in `~/.local/state/csp-lab` or under `XDG_STATE_HOME` when set, so commands work from any directory.
 
@@ -76,7 +76,7 @@ The stdio server provides `csp_topology`, `csp_ping`, and `csp_diagnose`. It doe
 
 ## Python tests
 
-This checkout includes a context-managed Python API and an automatically discovered pytest fixture. Use `uv sync --locked` to run them from a clone. For PyPI installations, install `csp-lab[pytest]>=0.2.0` in the test environment once that version is available.
+The package includes a context-managed Python API and an automatically discovered pytest fixture. Install `csp-lab[pytest]` in your test environment, or use `uv sync --locked` from a clone. Custom nodes and raw application requests require 0.3.0 or newer; during development, use the checkout with `build=True`.
 
 ```python
 from csp_lab import Lab
@@ -94,7 +94,23 @@ def test_node_responds(csp_lab):
     assert csp_lab.ping(2).reachable
 ```
 
-Tests using `csp_lab` share a lab for the pytest session by default. Use `@pytest.mark.csp_lab(scope="function")` for a fresh lab per test; protocol 1 and 2 use separate projects. The fixture skips when Docker or Compose is unavailable. An interrupted process can leave containers behind: list their project names with `docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u`, then run `csp-lab cleanup <csp-lab-py-project>` for the affected project.
+To test an application image, build the [independent uppercase example](https://github.com/lackim/csp-lab/blob/main/examples/custom-node/README.md), then use:
+
+```python
+import pytest
+from csp_lab import Node
+
+@pytest.mark.csp_lab(nodes=(Node(5, "uppercase-node:dev"),))
+def test_application(csp_lab):
+    assert csp_lab.request(5, port=10, payload=b"hello") == b"HELLO"
+```
+
+Tests using `csp_lab` share a lab for the pytest session by default, keyed by
+protocol, native-build setting, and normalized nodes (address and image reference).
+Reordering the same nodes shares a lab; changing an image, address, or protocol
+creates another. Use `@pytest.mark.csp_lab(scope="function", nodes=(...))` for
+stop/start tests. The nearest marker supplies the whole configuration; marker
+values are not merged, and every level is validated. The fixture skips when Docker or Compose is unavailable. An interrupted process can leave containers behind: list their project names with `docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u`, then run `csp-lab cleanup <csp-lab-py-project>` for the affected project.
 
 Each probe is created stopped on the lab's private network and started only after
 Docker acknowledges its ID. The caller confirms removal before returning its
@@ -120,7 +136,7 @@ uv run --locked csp-lab down
 
 ## What is tested
 
-`uv run --locked pytest` checks protocol validation, unavailable Docker, cleanup after a failed start, and unresponsive nodes without requiring Docker. Run `uv run --locked ruff check src/csp_lab tests` and `uv run --locked mypy src/csp_lab` for lint and types. The Docker integration flow exercises real libcsp, ZMQ, CLI diagnostics, and MCP for both protocol versions:
+`uv run --locked pytest` checks protocol validation, unavailable Docker, cleanup after a failed start, and unresponsive nodes without requiring Docker. Run `uv run --locked ruff check src/csp_lab tests examples/custom-node/tests` and `uv run --locked mypy src/csp_lab` for lint and types. The Docker integration flow exercises real libcsp, ZMQ, CLI/MCP, custom images, raw requests, failure artifacts, and pytest for both protocols. It requires the intentionally broken image to fail the same application assertion after readiness ping succeeds:
 
 ```sh
 bash test/integration.sh
@@ -129,10 +145,10 @@ bash test/integration.sh
 `bash test/native-bounds.sh` builds a separate AddressSanitizer image, verifies
 frame boundaries directly, and injects malformed ZMQ frames into a live hub and
 node for both protocol versions. The build applies the documented
-[local libcsp guards](patches/libcsp/README.md) without modifying the pinned submodule.
+[local libcsp guards](https://github.com/lackim/csp-lab/blob/main/patches/libcsp/README.md) without modifying the pinned submodule.
 
 The GitHub Actions workflow is configured to run both checks on Ubuntu with Docker Compose. The integration script uses its own temporary `XDG_STATE_HOME` and unique `CSP_LAB_PROJECT`, and cleans only those resources on exit, including after a failure. It does not adopt checkout-based legacy labs. If cleanup fails, it reports the project and retains the temporary state for recovery.
 
 ## Scope and license
 
-This lab uses the pinned libcsp release as a build dependency and selects CSP v1 or v2 as a runtime protocol. It does not build against historical libcsp 1.x releases or operate mixed-version networks. ZMQ is the only transport in this lab. The project is licensed under [MIT](LICENSE); the libcsp submodule retains its own license. Thanks to the libcsp and ZeroMQ projects that make the image possible; their licenses and source links are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This lab uses the pinned libcsp release as a build dependency and selects CSP v1 or v2 as a runtime protocol. It does not build against historical libcsp 1.x releases or operate mixed-version networks. ZMQ is the only transport in this lab. The project is licensed under [MIT](https://github.com/lackim/csp-lab/blob/main/LICENSE); the libcsp submodule retains its own license. Thanks to the libcsp and ZeroMQ projects that make the image possible; their licenses and source links are listed in [THIRD_PARTY_NOTICES.md](https://github.com/lackim/csp-lab/blob/main/THIRD_PARTY_NOTICES.md).

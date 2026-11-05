@@ -23,7 +23,7 @@ jobs:
       - run: uv python install 3.10
       - run: uv sync --locked --python 3.10
       - run: uv run --locked pytest -q
-      - run: uv run --locked ruff check src/csp_lab tests
+      - run: uv run --locked ruff check src/csp_lab tests examples/custom-node/tests
       - run: uv run --locked mypy src/csp_lab
       - run: bash test/wheel.sh
       - run: bash test/native-bounds.sh

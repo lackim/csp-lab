@@ -14,16 +14,27 @@ cat > "$smoke_dir/bin/docker" <<'SH'
 printf '%s|%s|%s\n' "$PWD" "$CSP_LAB_IMAGE" "$*" >> "$CSP_LAB_FAKE_LOG"
 case "$1 $2" in
   'network ls') printf '%s\n' network-id; exit 0;;
+  'image inspect') printf 'sha256:%064d\n' 1; exit 0;;
   'container ls') exit 0;;
   'container create')
-    for arg do target=$arg; done
-    printf '%s\n' "$target" > "$CSP_LAB_FAKE_LOG.target"
+    request_mode=0
+    for arg do
+      target=$arg
+      if [ "$arg" = request ]; then request_mode=1; fi
+    done
+    printf '%s %s\n' "$request_mode" "$target" > "$CSP_LAB_FAKE_LOG.target"
     printf '%064d\n' 1
     exit 0;;
   'container start')
-    read -r target < "$CSP_LAB_FAKE_LOG.target"
+    read -r request_mode target < "$CSP_LAB_FAKE_LOG.target"
+    if [ "$request_mode" = 1 ]; then
+      read -r payload
+      [ "$payload" = 6869 ] || exit 24
+      printf '%s\n' '{"status":"ok","reply":"4849"}'
+      exit 0
+    fi
     case "$target" in
-      2|3) printf '{"target":%s,"reachable":true,"rttMs":1}\n' "$target";;
+      2|3|5) printf '{"target":%s,"reachable":true,"rttMs":1}\n' "$target";;
     esac
     exit 0;;
 esac
@@ -87,7 +98,17 @@ PY
 
 uv pip install --python "$smoke_dir/venv/bin/python" 'pytest>=8,<10'
 cat > "$smoke_dir/work/test_plugin.py" <<'PY'
+import pytest
+from csp_lab import Node, RequestTimeout
+
 def test_auto_discovered_fixture(csp_lab):
     assert csp_lab.ping(2).reachable
+
+@pytest.mark.csp_lab(nodes=(Node(5, "wheel-app:local"),))
+def test_custom_node_and_request_from_installed_wheel(csp_lab):
+    assert csp_lab.nodes == (Node(5, "wheel-app:local"),)
+    assert csp_lab.topology().nodes == [2, 3, 5]
+    assert csp_lab.request(5, port=10, payload=b"hi") == b"HI"
+    assert issubclass(RequestTimeout, TimeoutError)
 PY
 "$smoke_dir/venv/bin/python" -m pytest -q "$smoke_dir/work/test_plugin.py"
