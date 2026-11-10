@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f examples/custom-node/Dockerfile .
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS build
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build patch pkg-config libzmq3-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -15,7 +15,7 @@ RUN cmake -G Ninja -S examples/custom-node -B build -DCMAKE_BUILD_TYPE=Release \
     -DCSP_LAB_EXAMPLE_TESTING=${TESTING} -DCSP_LAB_EXAMPLE_INCORRECT=${INCORRECT} && \
     cmake --build build --target uppercase-node
 
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 RUN apt-get update && apt-get install -y --no-install-recommends libzmq5 && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/build/uppercase-node /usr/local/bin/uppercase-node
