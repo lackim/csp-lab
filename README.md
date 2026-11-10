@@ -12,7 +12,7 @@ uvx csp-lab ping 2
 uvx csp-lab down
 ```
 
-The published [Python package](https://pypi.org/project/csp-lab/) uses its matching [prebuilt Docker image](https://github.com/lackim/csp-lab/pkgs/container/csp-lab), so this does not require a source checkout or a local libcsp build. You can also install the CLI with `uv tool install csp-lab` and run `csp-lab` directly.
+The published [Python package](https://pypi.org/project/csp-lab/) uses its matching [prebuilt Docker image](https://github.com/lackim/csp-lab/pkgs/container/csp-lab), so this does not require a source checkout or a local libcsp build. The image is pulled only when it is not already present locally, so later starts work offline. You can also install the CLI with `uv tool install csp-lab` and run `csp-lab` directly.
 
 ## Why use it?
 
@@ -53,7 +53,7 @@ If a lab was started by the earlier checkout-based CLI, run `csp-lab down` from 
 
 To test CSP v1, start a fresh lab with `up --protocol 1`. `up` refuses to change the protocol of an existing lab; run `down` first. The two versions never share a running network.
 
-The CLI commands are `up`, `down`, `status`, `topology`, `ping <address>`, and `doctor`. `status` checks whether the hub and both nodes are running in Docker. Use `--json` for machine-readable output. `ping` and `doctor` return a nonzero exit code when a node does not respond. Addresses must be 1–31 for CSP v1 or 1–16383 for CSP v2. The demo nodes use addresses 2 and 3; the probe uses address 4.
+`up` waits up to 30 seconds for both demo nodes to answer a CSP ping. The CLI commands are `up`, `down`, `status`, `topology`, `ping <address>`, and `doctor`. `status` checks whether the hub and both nodes are running in Docker. Use `--json` for machine-readable output. `ping` and `doctor` return a nonzero exit code when a node does not respond. Addresses must be 1–31 for CSP v1 or 1–16383 for CSP v2. The demo nodes use addresses 2 and 3; the probe uses address 4.
 
 ## MCP
 
@@ -110,7 +110,7 @@ protocol, native-build setting, and normalized nodes (address and image referenc
 Reordering the same nodes shares a lab; changing an image, address, or protocol
 creates another. Use `@pytest.mark.csp_lab(scope="function", nodes=(...))` for
 stop/start tests. The nearest marker supplies the whole configuration; marker
-values are not merged, and every level is validated. The fixture skips when Docker or Compose is unavailable. An interrupted process can leave containers behind: list their project names with `docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u`, then run `csp-lab cleanup <csp-lab-py-project>` for the affected project.
+values are not merged, and every level is validated. If a shared lab fails to start, the remaining tests with that configuration fail immediately with the original error rather than starting it again. The fixture skips when Docker or Compose is unavailable. An interrupted process can leave containers behind: list their project names with `docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u`, then run `csp-lab cleanup <csp-lab-py-project>` for the affected project.
 
 Each probe is created stopped on the lab's private network and started only after
 Docker acknowledges its ID. The caller confirms removal before returning its

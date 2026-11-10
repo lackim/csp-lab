@@ -447,3 +447,47 @@ def test_strict_xpass_failure_is_not_replaced_by_function_cleanup_error(pytester
     result = pytester.runpytest_subprocess("-q", "-W", "error")
     result.assert_outcomes(failed=1, errors=0)
     result.stdout.fnmatch_lines(["*XPASS(strict)*unexpected success*"])
+
+
+def test_failed_shared_startup_is_not_repeated_for_each_test(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest(
+        """
+        import json
+        from pathlib import Path
+        from csp_lab import docker
+
+        starts = []
+        docker.run = lambda *args, **kwargs: 'available'
+        docker.cleanup_owned_project = lambda project: None
+
+        def start(protocol, image, project, build):
+            starts.append(protocol)
+            if protocol == 2:
+                raise RuntimeError('image is broken')
+
+        docker.start_project = start
+
+        def pytest_sessionfinish(session, exitstatus):
+            Path('starts.json').write_text(json.dumps(starts))
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+
+        def test_a(csp_lab): pass
+        def test_b(csp_lab): pass
+        def test_c(csp_lab): pass
+
+        @pytest.mark.csp_lab(protocol=1)
+        def test_other_configuration_still_starts(csp_lab): pass
+
+        @pytest.mark.csp_lab(scope='function')
+        def test_isolated_lab_retries(csp_lab): pass
+        """
+    )
+    result = pytester.runpytest_subprocess("-q", "--csp-lab-artifacts", "none")
+    result.assert_outcomes(errors=4, passed=1)
+    result.stdout.fnmatch_lines(["*Shared lab startup already failed*image is broken*"])
+    # One shared attempt, one other configuration, one explicit function lab.
+    assert json.loads((pytester.path / "starts.json").read_text()) == [2, 1, 2]

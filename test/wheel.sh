@@ -18,10 +18,17 @@ case "$1 $2" in
   'container ls') exit 0;;
   'container create')
     request_mode=0
+    targets=
+    collecting=0
     for arg do
       target=$arg
       if [ "$arg" = request ]; then request_mode=1; fi
+      # Probe arguments are: probe VERSION ADDRESS TARGET...
+      if [ "$collecting" -gt 2 ]; then targets="$targets $arg"; fi
+      if [ "$collecting" -gt 0 ]; then collecting=$((collecting + 1)); fi
+      if [ "$arg" = probe ]; then collecting=1; fi
     done
+    if [ "$request_mode" = 0 ]; then target=$targets; fi
     printf '%s %s\n' "$request_mode" "$target" > "$CSP_LAB_FAKE_LOG.target"
     printf '%064d\n' 1
     exit 0;;
@@ -33,9 +40,11 @@ case "$1 $2" in
       printf '%s\n' '{"status":"ok","reply":"4849"}'
       exit 0
     fi
-    case "$target" in
-      2|3|5) printf '{"target":%s,"reachable":true,"rttMs":1}\n' "$target";;
-    esac
+    for target in $target; do
+      case "$target" in
+        2|3|5) printf '{"target":%s,"reachable":true,"rttMs":1}\n' "$target";;
+      esac
+    done
     exit 0;;
 esac
 for argument do
@@ -83,7 +92,7 @@ image = f"ghcr.io/lackim/csp-lab:v{version('csp-lab')}"
 assert all(line.startswith(f"{work}|") for line in calls)
 assert all(line.startswith(f"{work}|{image}|") for line in calls if "|compose " in line)
 assert any(image in line and "|container create " in line for line in calls)
-assert any("up -d --pull always hub node2 node3" in line for line in calls)
+assert any("up -d --pull missing hub node2 node3" in line for line in calls)
 assert any("-p csp-lab -f " in line for line in calls)
 PY
 

@@ -40,39 +40,61 @@ static uint64_t now_ms(void) {
     return (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
 }
 
-static int ping_exact_node(uint16_t target) {
+#define MAX_TARGETS 16
+/* libcsp's pinned build has eight connections; leave room for late closes. */
+#define PING_BATCH 4
+
+/* Ping one batch concurrently so unreachable nodes share a single timeout. */
+static void ping_batch(const uint16_t *targets, size_t count, int *rtt) {
     const uint32_t timeout = 1500;
     const uint64_t start = now_ms();
-    csp_conn_t *conn = csp_connect(CSP_PRIO_NORM, target, CSP_PING, timeout, CSP_O_NONE);
-    if (conn == NULL) return -1;
+    csp_conn_t *conns[PING_BATCH] = {0};
+    uint8_t tokens[PING_BATCH][16];
+    size_t pending = 0;
 
-    csp_packet_t *request = csp_buffer_get(0);
-    if (request == NULL) {
-        csp_close(conn);
-        return -1;
+    for (size_t i = 0; i < count; i++) {
+        rtt[i] = -1;
+        conns[i] = csp_connect(CSP_PRIO_NORM, targets[i], CSP_PING, timeout, CSP_O_NONE);
+        if (conns[i] == NULL) continue;
+        csp_packet_t *request = csp_buffer_get(0);
+        if (request == NULL) {
+            csp_close(conns[i]);
+            conns[i] = NULL;
+            continue;
+        }
+        uint64_t nonce = start ^ ((uint64_t)getpid() << 32) ^ ((uint64_t)i << 48) ^ targets[i];
+        for (size_t b = 0; b < sizeof(tokens[i]); b++)
+            tokens[i][b] = (uint8_t)(nonce >> ((b % 8) * 8));
+        memcpy(request->data, tokens[i], sizeof(tokens[i]));
+        request->length = sizeof(tokens[i]);
+        csp_send(conns[i], request);
+        pending++;
     }
-    uint8_t token[16];
-    uint64_t nonce = start ^ ((uint64_t)getpid() << 32) ^ target;
-    for (size_t i = 0; i < sizeof(token); i++) token[i] = (uint8_t)(nonce >> ((i % 8) * 8));
-    memcpy(request->data, token, sizeof(token));
-    request->length = sizeof(token);
-    csp_send(conn, request);
 
-    int rtt = -1;
-    while (now_ms() - start < timeout) {
-        uint32_t remaining = (uint32_t)(timeout - (now_ms() - start));
-        csp_packet_t *reply = csp_read(conn, remaining);
-        if (reply == NULL) break;
-        bool matches = reply->id.src == target && reply->length == sizeof(token) &&
-                       memcmp(reply->data, token, sizeof(token)) == 0;
-        csp_buffer_free(reply);
-        if (matches) {
-            rtt = (int)(now_ms() - start);
-            break;
+    while (pending > 0 && now_ms() - start < timeout) {
+        for (size_t i = 0; i < count; i++) {
+            if (conns[i] == NULL || rtt[i] >= 0) continue;
+            uint64_t elapsed = now_ms() - start;
+            if (elapsed >= timeout) break;
+            uint32_t remaining = (uint32_t)(timeout - elapsed);
+            /* A lone pending connection may block; several are polled in turn. */
+            csp_packet_t *reply = csp_read(conns[i], pending == 1 ? remaining : 10);
+            if (reply == NULL) {
+                if (pending == 1) pending = 0;
+                continue;
+            }
+            bool matches = reply->id.src == targets[i] && reply->length == sizeof(tokens[i]) &&
+                           memcmp(reply->data, tokens[i], sizeof(tokens[i])) == 0;
+            csp_buffer_free(reply);
+            if (matches) {
+                rtt[i] = (int)(now_ms() - start);
+                pending--;
+            }
         }
     }
-    csp_close(conn);
-    return rtt;
+    for (size_t i = 0; i < count; i++) {
+        if (conns[i] != NULL) csp_close(conns[i]);
+    }
 }
 
 static int hex_digit(int ch) {
@@ -135,14 +157,18 @@ static int request_reply(uint16_t address, uint16_t target, uint8_t port,
 
 int main(int argc, char **argv) {
     bool request = argc == 7 && strcmp(argv[1], "request") == 0;
-    if (!request && (argc != 5 ||
-        (strcmp(argv[1], "server") != 0 && strcmp(argv[1], "probe") != 0))) {
-        fprintf(stderr, "usage: csp-lab-native server|probe VERSION ADDRESS HUB_OR_TARGET\n"
+    bool server = argc == 5 && strcmp(argv[1], "server") == 0;
+    bool ping = argc >= 5 && argc <= 4 + MAX_TARGETS && strcmp(argv[1], "probe") == 0;
+    if (!request && !server && !ping) {
+        fprintf(stderr, "usage: csp-lab-native server VERSION ADDRESS HUB\n"
+                        "       csp-lab-native probe VERSION ADDRESS TARGET...\n"
                         "       csp-lab-native request VERSION ADDRESS TARGET PORT TIMEOUT_MS\n");
         return 2;
     }
 
     unsigned int version, address, target = 0, port = 0, timeout = 0;
+    uint16_t targets[MAX_TARGETS];
+    size_t target_count = 0;
     uint8_t payload[256];
     size_t length = 0;
     if (parse_uint(argv[2], 2, &version) != 0 || version < 1 ||
@@ -152,13 +178,17 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    bool probe = request || strcmp(argv[1], "probe") == 0;
+    bool probe = request || ping;
     const char *hub = argv[4];
     if (probe) {
-        if (parse_uint(argv[4], version == 1 ? (request ? 30 : 31) :
-                      (request ? 16382 : 16383), &target) != 0 || target == 0) {
-            fprintf(stderr, "invalid target\n");
-            return 2;
+        const int last = request ? 4 : argc - 1;
+        for (int i = 4; i <= last; i++) {
+            if (parse_uint(argv[i], version == 1 ? (request ? 30 : 31) :
+                          (request ? 16382 : 16383), &target) != 0 || target == 0) {
+                fprintf(stderr, "invalid target\n");
+                return 2;
+            }
+            targets[target_count++] = (uint16_t)target;
         }
         hub = "hub";
     }
@@ -196,9 +226,15 @@ int main(int argc, char **argv) {
         usleep(500000);
         if (request) return request_reply((uint16_t)address, (uint16_t)target,
                                           (uint8_t)port, timeout, payload, length);
-        int rtt = ping_exact_node((uint16_t)target);
-        printf("{\"target\":%u,\"reachable\":%s,\"rttMs\":%d}\n",
-               target, rtt >= 0 ? "true" : "false", rtt);
+        for (size_t first = 0; first < target_count; first += PING_BATCH) {
+            size_t count = target_count - first < PING_BATCH ? target_count - first : PING_BATCH;
+            int rtt[PING_BATCH];
+            ping_batch(targets + first, count, rtt);
+            for (size_t i = 0; i < count; i++) {
+                printf("{\"target\":%u,\"reachable\":%s,\"rttMs\":%d}\n",
+                       (unsigned int)targets[first + i], rtt[i] >= 0 ? "true" : "false", rtt[i]);
+            }
+        }
         return 0;
     }
 

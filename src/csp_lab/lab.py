@@ -198,7 +198,12 @@ class Lab:
         self._require_active()
         self._operation = {"name": "diagnose"}
         return docker.diagnose_project(
-            self.protocol, self.image, self.project, owner=self._probes, images=self._images
+            self.protocol,
+            self.image,
+            self.project,
+            owner=self._probes,
+            images=self._images,
+            batch=True,
         )
 
     def _custom_address(self, address: int) -> None:
