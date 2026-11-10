@@ -32,4 +32,5 @@ COPY vendor/libcsp/AUTHORS /usr/share/licenses/libcsp/AUTHORS
 COPY patches/libcsp /usr/share/licenses/libcsp/patches
 COPY native/zmq_frame.h /usr/share/licenses/libcsp/patches/csp_lab_zmq_frame.h
 COPY THIRD_PARTY_NOTICES.md /usr/share/licenses/csp-lab/THIRD_PARTY_NOTICES.md
+USER 10001
 ENTRYPOINT ["/usr/local/bin/csp-lab-native"]

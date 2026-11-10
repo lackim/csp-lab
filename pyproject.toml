@@ -4,17 +4,34 @@ build-backend = "hatchling.build"
 
 [project]
 name = "csp-lab"
-version = "0.3.0"
+version = "0.3.1"
 description = "A local CubeSat Space Protocol lab powered by libcsp"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+keywords = ["cubesat", "csp", "libcsp", "pytest", "mcp", "docker", "testing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Testing",
+  "Topic :: System :: Networking",
+  "Typing :: Typed",
+]
 dependencies = [
   "filelock>=3.16,<4",
   "mcp>=1.20,<2",
   "pydantic>=2.10,<3",
   "typer>=0.15,<1",
 ]
+
+[project.urls]
+Repository = "https://github.com/lackim/csp-lab"
+Issues = "https://github.com/lackim/csp-lab/issues"
+Changelog = "https://github.com/lackim/csp-lab/tree/main/docs/releases"
 
 [project.scripts]
 csp-lab = "csp_lab.cli:run_cli"

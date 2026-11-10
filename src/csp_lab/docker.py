@@ -426,7 +426,8 @@ def stop_project(protocol: Protocol, image: str | None, project: str) -> None:
 def start_project(protocol: Protocol, image: str, project: str, build: bool = False) -> None:
     if build and (not (ROOT / "Dockerfile").is_file() or not (ROOT / "vendor" / "libcsp").is_dir()):
         raise RuntimeError("Local build requires a source checkout with the libcsp submodule.")
-    pull = ["--build"] if build else ["--pull", "always"]
+    # A release tag names one image, so a local copy needs no registry access.
+    pull = ["--build"] if build else ["--pull", "missing"]
     compose(
         ["up", "-d", *pull, "hub", "node2", "node3"],
         protocol,
@@ -435,9 +436,20 @@ def start_project(protocol: Protocol, image: str, project: str, build: bool = Fa
         build_overlay=build,
         project=project,
     )
-    for target in (2, 3):
-        if not ping_with_protocol(target, protocol, image, project).reachable:
-            raise RuntimeError(f"Node {target} did not answer a CSP v{protocol} ping.")
+    wait_for_nodes((2, 3), protocol, image, project, ProbeOwner(project))
+
+
+def _image_id(image: str) -> str:
+    """Return a local image's ID, pulling the image only when it is missing."""
+    try:
+        identity = run("docker", ["image", "inspect", "--format", "{{.Id}}", image])
+    except RuntimeError:
+        run("docker", ["image", "pull", image], timeout=600)
+        identity = run("docker", ["image", "inspect", "--format", "{{.Id}}", image])
+    identity = identity.strip()
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", identity) is None:
+        raise RuntimeError("Docker returned an invalid image ID.")
+    return identity
 
 
 def resolve_node_images(nodes: tuple[Node, ...]) -> dict[int, str]:
@@ -447,15 +459,7 @@ def resolve_node_images(nodes: tuple[Node, ...]) -> dict[int, str]:
         if node.image in resolved:
             continue
         try:
-            try:
-                identity = run("docker", ["image", "inspect", "--format", "{{.Id}}", node.image])
-            except RuntimeError:
-                run("docker", ["image", "pull", node.image], timeout=600)
-                identity = run("docker", ["image", "inspect", "--format", "{{.Id}}", node.image])
-            identity = identity.strip()
-            if re.fullmatch(r"sha256:[0-9a-f]{64}", identity) is None:
-                raise RuntimeError("Docker returned an invalid image ID.")
-            resolved[node.image] = identity
+            resolved[node.image] = _image_id(node.image)
         except Exception as exc:
             raise RuntimeError(
                 f"Could not prepare custom node image {node.image!r}: {exc}"
@@ -483,19 +487,16 @@ def write_node_overlay(path: Path, protocol: Protocol, images: dict[int, str]) -
 def wait_for_nodes(
     targets: tuple[int, ...], protocol: Protocol, image: str, project: str, owner: ProbeOwner
 ) -> None:
+    # One probe pings every pending node concurrently, so slow nodes share the
+    # budget instead of each spending a container start and a full ping timeout.
     deadline = time.monotonic() + 30
     pending = list(targets)
     while pending:
-        for target in tuple(pending):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise RuntimeError(
-                    f"Nodes {pending} did not answer CSP v{protocol} ping within 30s."
-                )
-            if ping_with_protocol(
-                target, protocol, image, project, owner=owner, timeout=remaining
-            ).reachable:
-                pending.remove(target)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"Nodes {pending} did not answer CSP v{protocol} ping within 30s.")
+        results = ping_nodes(tuple(pending), protocol, image, project, owner, timeout=remaining)
+        pending = [result.target for result in results if not result.reachable]
         if pending:
             time.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
@@ -514,7 +515,7 @@ def start_custom_project(
     if build:
         compose(["build", "hub"], protocol, image, 600, build_overlay=True, project=project)
     else:
-        run("docker", ["image", "pull", image], timeout=600)
+        _image_id(image)
     compose(
         [
             "up",
@@ -661,6 +662,37 @@ def ping_with_protocol(
     return result
 
 
+def ping_nodes(
+    targets: tuple[int, ...],
+    protocol: Protocol,
+    image: str,
+    project: str,
+    owner: ProbeOwner,
+    *,
+    timeout: float = 30,
+) -> list[PingResult]:
+    """Ping up to 16 nodes with one probe; requires the image matching this package."""
+    if not 1 <= len(targets) <= 16:
+        raise ValueError("One probe pings between 1 and 16 nodes.")
+    for target in targets:
+        parse_address(str(target), protocol)
+    if owner.project != project:
+        raise ValueError("Probe owner does not match the requested project.")
+    output = owner.execute(
+        ["probe", str(protocol), "4", *(str(target) for target in targets)],
+        image,
+        timeout=timeout,
+    )
+    lines = [line for line in output.splitlines() if line.startswith('{"target":')]
+    try:
+        results = [PingResult.model_validate_json(line) for line in lines]
+    except ValidationError as exc:
+        raise ValueError("Probe returned an invalid result.") from exc
+    if [result.target for result in results] != list(targets):
+        raise ValueError("Probe returned an invalid result.")
+    return results
+
+
 def ping(target: int) -> PingResult:
     state = require_state()
     return ping_with_protocol(target, state.protocol, state_image(state), state_project(state))
@@ -727,11 +759,16 @@ def diagnose_project(
     *,
     owner: ProbeOwner | None = None,
     images: dict[int, str] | None = None,
+    batch: bool = False,
 ) -> DiagnoseResult:
-    nodes = [
-        ping_with_protocol(target, protocol, image, project, owner=owner)
-        for target in sorted((2, 3, *(images or {})))
-    ]
+    targets = tuple(sorted((2, 3, *(images or {}))))
+    if batch and owner is not None:
+        nodes = ping_nodes(targets, protocol, image, project, owner)
+    else:
+        # A CLI lab may still run an older image whose probe takes one target.
+        nodes = [
+            ping_with_protocol(target, protocol, image, project, owner=owner) for target in targets
+        ]
     return DiagnoseResult(
         protocol=protocol,
         libcspVersion="2.1",

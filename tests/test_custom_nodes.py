@@ -134,6 +134,11 @@ def test_custom_context_keeps_overlay_and_validates_stop_start_before_docker(
     monkeypatch.setattr(docker, "start_custom_project", start)
     monkeypatch.setattr(docker, "change_node_state", change)
     monkeypatch.setattr(docker, "ping_with_protocol", ping)
+    monkeypatch.setattr(
+        docker,
+        "ping_nodes",
+        lambda targets, *args, **kwargs: [ping(target) for target in targets],
+    )
     with Lab(nodes=(Node(5, "app"),)) as lab:
         assert overlay.exists()
         assert lab.topology().nodes == [2, 3, 5]
@@ -162,16 +167,51 @@ def test_readiness_retries_only_pending_nodes_with_one_deadline(monkeypatch: pyt
     clock = [0.0]
     calls = []
 
-    def ping(target, *args, **kwargs):
-        calls.append((target, kwargs["timeout"]))
+    def ping(targets, *args, **kwargs):
+        calls.append((targets, kwargs["timeout"]))
         clock[0] += 1
-        return PingResult(target=target, reachable=target == 2 or clock[0] >= 3, rttMs=1)
+        return [
+            PingResult(target=target, reachable=target == 2 or clock[0] >= 3, rttMs=1)
+            for target in targets
+        ]
 
     monkeypatch.setattr(docker.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(docker.time, "sleep", lambda delay: None)
-    monkeypatch.setattr(docker, "ping_with_protocol", ping)
-    docker.wait_for_nodes((2, 5), 2, "native", "project", docker.ProbeOwner("project"))
-    assert calls == [(2, 30), (5, 29), (5, 28)]
+    monkeypatch.setattr(docker, "ping_nodes", ping)
+    docker.wait_for_nodes((2, 5, 6), 2, "native", "project", docker.ProbeOwner("project"))
+    # Each round is one probe for every pending node, not one probe per node.
+    assert calls == [((2, 5, 6), 30), ((5, 6), 29), ((5, 6), 28)]
+
+
+def test_one_probe_pings_several_nodes_and_validates_each_result(monkeypatch: pytest.MonkeyPatch):
+    commands = []
+    replies = [
+        '{"target":2,"reachable":true,"rttMs":1}',
+        '{"target":5,"reachable":false,"rttMs":-1}',
+    ]
+
+    def execute(self, command, image, timeout=30, **kwargs):
+        commands.append((command, image, timeout))
+        return "library log line\n" + "\n".join(replies) + "\n"
+
+    monkeypatch.setattr(docker.ProbeOwner, "execute", execute)
+    owner = docker.ProbeOwner("project")
+    results = docker.ping_nodes((2, 5), 2, "native", "project", owner, timeout=7)
+    assert [(result.target, result.reachable) for result in results] == [(2, True), (5, False)]
+    assert commands == [(["probe", "2", "4", "2", "5"], "native", 7)]
+
+    for bad in (replies[:1], replies[::-1], [*replies, replies[0]]):
+        replies = bad
+        with pytest.raises(ValueError, match="invalid result"):
+            docker.ping_nodes((2, 5), 2, "native", "project", owner)
+    commands.clear()
+    with pytest.raises(ValueError, match="between 1 and 16 nodes"):
+        docker.ping_nodes(tuple(range(5, 22)), 2, "native", "project", owner)
+    with pytest.raises(ValueError, match="between 1 and 31"):
+        docker.ping_nodes((2, 32), 1, "native", "project", owner)
+    with pytest.raises(ValueError, match="owner does not match"):
+        docker.ping_nodes((2,), 2, "native", "other", owner)
+    assert commands == []
 
 
 def test_failed_restart_does_not_close_lab(monkeypatch: pytest.MonkeyPatch):
@@ -227,13 +267,13 @@ def test_start_prepares_native_image_before_up_with_custom_ids(
 def test_readiness_failure_has_one_total_budget(monkeypatch: pytest.MonkeyPatch):
     clock = [0.0]
 
-    def ping(target, *args, **kwargs):
+    def ping(targets, *args, **kwargs):
         clock[0] += 15
-        return PingResult(target=target, reachable=False, rttMs=-1)
+        return [PingResult(target=target, reachable=False, rttMs=-1) for target in targets]
 
     monkeypatch.setattr(docker.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(docker.time, "sleep", lambda delay: None)
-    monkeypatch.setattr(docker, "ping_with_protocol", ping)
+    monkeypatch.setattr(docker, "ping_nodes", ping)
     with pytest.raises(RuntimeError, match=r"Nodes \[5\].*within 30s"):
         docker.wait_for_nodes((5,), 2, "native", "project", docker.ProbeOwner("project"))
     assert clock[0] == 30
@@ -263,3 +303,26 @@ def test_custom_startup_failure_reports_images_and_removes_temporary_configurati
             pass
     assert cleaned == [lab.project]
     assert not overlay.exists()
+
+
+def test_managed_image_is_pulled_only_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    calls = []
+    local = True
+
+    def run(command, args, **kwargs):
+        calls.append(args[:2])
+        if args[:2] == ["image", "inspect"] and not local and ["image", "pull"] not in calls:
+            raise RuntimeError("No such image")
+        return "sha256:" + "b" * 64 + "\n"
+
+    monkeypatch.setattr(docker, "run", run)
+    monkeypatch.setattr(docker, "compose", lambda *args, **kwargs: "")
+    monkeypatch.setattr(docker, "wait_for_nodes", lambda *args: None)
+    start = (2, "native", "project", False, tmp_path / "nodes.json", (5,))
+    docker.start_custom_project(*start, docker.ProbeOwner("project"))
+    assert calls == [["image", "inspect"]]
+
+    calls.clear()
+    local = False
+    docker.start_custom_project(*start, docker.ProbeOwner("project"))
+    assert calls == [["image", "inspect"], ["image", "pull"], ["image", "inspect"]]

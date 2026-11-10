@@ -100,6 +100,7 @@ def pytest_runtest_makereport(
 class _Registry:
     def __init__(self, artifacts_dir: str | None) -> None:
         self.labs: dict[tuple[Protocol, bool, tuple[Node, ...]], Lab] = {}
+        self.failures: dict[tuple[Protocol, bool, tuple[Node, ...]], Exception] = {}
         self.docker_checked = False
         self.artifacts_dir = artifacts_dir
 
@@ -115,6 +116,12 @@ class _Registry:
 
     def get(self, options: _Options) -> Lab:
         key = (options.protocol, options.build, options.nodes)
+        if key in self.failures:
+            # Starting again would repeat the pull, the readiness wait, and the
+            # artifact bundle for every remaining test of this configuration.
+            raise RuntimeError(
+                f"Shared lab startup already failed in this session: {self.failures[key]}"
+            ) from self.failures[key]
         if key not in self.labs:
             self.ensure_docker()
             lab = Lab(
@@ -123,7 +130,11 @@ class _Registry:
                 nodes=options.nodes,
                 artifacts_dir=self.artifacts_dir,
             )
-            lab.__enter__()
+            try:
+                lab.__enter__()
+            except Exception as exc:
+                self.failures[key] = exc
+                raise
             self.labs[key] = lab
         return self.labs[key]
 

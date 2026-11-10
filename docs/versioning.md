@@ -12,7 +12,9 @@ The current image always builds against libcsp v2.1. Selecting `--protocol 1` ch
 
 Version 0.3 adds custom application images, raw request/reply, and pytest failure
 diagnostics. Use the native image matching the Python package version; 0.2 images
-do not implement the request mode. See the [0.3.0 changes](https://github.com/lackim/csp-lab/blob/main/docs/releases/0.3.0.md).
+do not implement the request mode. See the [0.3.0 changes](https://github.com/lackim/csp-lab/blob/main/docs/releases/0.3.0.md). Version 0.3.1 changes the probe
+to ping several nodes at once, so 0.3.0 images do not work with it; see the
+[0.3.1 changes](https://github.com/lackim/csp-lab/blob/main/docs/releases/0.3.1.md).
 
 ## Updating libcsp 2.x
 

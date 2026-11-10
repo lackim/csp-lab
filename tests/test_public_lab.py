@@ -26,6 +26,13 @@ def test_two_labs_are_isolated_and_return_existing_models(monkeypatch: pytest.Mo
     monkeypatch.setattr(docker, "start_project", start)
     monkeypatch.setattr(docker, "cleanup_owned_project", cleaned.append)
     monkeypatch.setattr(docker, "ping_with_protocol", probe)
+    monkeypatch.setattr(
+        docker,
+        "ping_nodes",
+        lambda targets, protocol, image, project, owner: [
+            probe(target, protocol, image, project) for target in targets
+        ],
+    )
 
     with Lab(protocol=1) as first, Lab(protocol=2) as second:
         assert first.project != second.project
@@ -98,19 +105,25 @@ def test_unresponsive_start_cleans_only_its_project(monkeypatch: pytest.MonkeyPa
         return ""
 
     monkeypatch.setattr(docker, "compose", compose)
-    monkeypatch.setattr(
-        docker,
-        "ping_with_protocol",
-        lambda target, protocol, image, project: PingResult(
-            target=target, reachable=False, rttMs=-1
-        ),
-    )
+    clock = [0.0]
+    rounds: list[tuple[int, ...]] = []
+
+    def unreachable(targets: tuple[int, ...], *args: object, **kwargs: object) -> list[PingResult]:
+        rounds.append(targets)
+        clock[0] += 20
+        return [PingResult(target=target, reachable=False, rttMs=-1) for target in targets]
+
+    monkeypatch.setattr(docker.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(docker.time, "sleep", lambda delay: None)
+    monkeypatch.setattr(docker, "ping_nodes", unreachable)
     monkeypatch.setattr(docker, "run", lambda *args, **kwargs: "")
     lab = Lab(artifacts_dir=None)
-    with pytest.raises(RuntimeError, match="Node 2 did not answer"):
+    with pytest.raises(RuntimeError, match=r"Nodes \[2, 3\] did not answer.*within 30s"):
         with lab:
             pass
     assert calls == [("up", lab.project), ("down", lab.project)]
+    # The demo start retries within the same budget as custom nodes.
+    assert rounds == [(2, 3), (2, 3)]
 
 
 def test_body_error_stays_primary_when_cleanup_fails(
