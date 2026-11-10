@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS native-source
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS native-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build patch pkg-config libzmq3-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -21,7 +21,7 @@ RUN cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DCSP_LAB_BUILD_TESTS=ON \
 ENV ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
 ENTRYPOINT ["bash", "/app/test/native-bounds/run.sh"]
 
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 RUN apt-get update && apt-get install -y --no-install-recommends libzmq5 && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/build/csp-lab-native /usr/local/bin/csp-lab-native
