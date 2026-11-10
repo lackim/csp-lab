@@ -24,11 +24,11 @@ async def main() -> None:
                 "csp_ping",
                 "csp_topology",
             ]
-            assert all(tool.annotations and tool.annotations.readOnlyHint for tool in tools.tools)
+            assert all(tool.annotations and tool.annotations.read_only_hint for tool in tools.tools)
 
             async def call(name: str, arguments: dict[str, int] | None = None) -> dict[str, object]:
                 result = await session.call_tool(name, arguments or {})
-                assert not result.isError, result
+                assert not result.is_error, result
                 assert result.content and result.content[0].type == "text"
                 return json.loads(result.content[0].text)
 
@@ -39,10 +39,10 @@ async def main() -> None:
             assert (await call("csp_ping", {"address": 5}))["reachable"] is False
             assert (await call("csp_diagnose"))["healthy"] is True
             invalid = await session.call_tool("csp_ping", {"address": True})
-            assert invalid.isError
+            assert invalid.is_error
             maximum = 31 if topology["protocol"] == 1 else 16383
             invalid = await session.call_tool("csp_ping", {"address": maximum + 1})
-            assert invalid.isError
+            assert invalid.is_error
             print(f"MCP smoke test passed for CSP v{topology['protocol']}")
 
 

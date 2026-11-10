@@ -3,14 +3,14 @@
 import json
 from typing import Annotated
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from csp_lab import docker
 
-server = FastMCP("csp-lab")
-READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+server = MCPServer("csp-lab")
+READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 
 
 @server.tool(
