@@ -19,5 +19,8 @@ updates:
     schedule:
       interval: monthly
     groups:
+      # Major versions arrive as separate pull requests: they can change APIs
+      # and widen the upper bounds in pyproject.toml.
       python:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
