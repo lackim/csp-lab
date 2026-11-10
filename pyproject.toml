@@ -22,8 +22,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "filelock>=3.16,<4",
-  "mcp>=1.20,<2",
+  "filelock>=3.16,<5",
+  "mcp>=1.20,<3",
   "pydantic>=2.10,<3",
   "typer>=0.15,<1",
 ]
@@ -44,7 +44,7 @@ csp_lab = "csp_lab.pytest_plugin"
 
 [dependency-groups]
 dev = [
-  "mypy>=1.15,<2",
+  "mypy>=1.15,<3",
   "pytest>=8,<10",
   "ruff>=0.11,<1",
 ]
